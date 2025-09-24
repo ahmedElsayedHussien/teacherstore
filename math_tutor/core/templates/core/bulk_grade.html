@@ -1,0 +1,165 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <title>تصحيح جماعي سريع</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.rtl.min.css">
+  <style>
+    body { background: #f8fafc; }
+    .card { border: 0; border-radius: 1rem; box-shadow: 0 6px 18px rgba(0,0,0,.06); }
+    .table td, .table th { vertical-align: middle; }
+    .sticky-tools { position: sticky; top: 0; z-index: 10; background: #f8fafc; padding: .5rem 0; }
+  </style>
+</head>
+<body class="container py-4">
+
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <h1 class="h4 m-0">تصحيح جماعي سريع</h1>
+    <a href="{% url 'core:dashboard' %}" class="btn btn-outline-secondary btn-sm">العودة للوحة المدرّس</a>
+  </div>
+
+  {% if messages %}
+    <div class="mb-3">
+      {% for message in messages %}
+        <div class="alert alert-{{ message.tags }}">{{ message }}</div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  <div class="card p-3 mb-3">
+  <form method="get" class="row g-2">
+    <div class="col-md-3">
+      <label class="form-label">فلترة بالمجموعة</label>
+      <select name="group" class="form-select" onchange="this.form.submit()">
+        <option value="">— جميع المجموعات —</option>
+        {% for g in groups %}
+          <option value="{{ g.id }}" {% if active_group == g.id %}selected{% endif %}>{{ g.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-md-2">
+      <label class="form-label">الحالة</label>
+      <select name="status" class="form-select" onchange="this.form.submit()">
+        <option value="">— الكل —</option>
+        <option value="SUBMITTED" {% if status == "SUBMITTED" %}selected{% endif %}>مُسلَّم</option>
+        <option value="LATE" {% if status == "LATE" %}selected{% endif %}>متأخّر</option>
+      </select>
+    </div>
+
+    <div class="col-md-2">
+      <label class="form-label">من تاريخ</label>
+      <input type="date" name="date_from" class="form-control" value="{{ date_from }}" onchange="this.form.submit()">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">إلى تاريخ</label>
+      <input type="date" name="date_to" class="form-control" value="{{ date_to }}" onchange="this.form.submit()">
+    </div>
+
+    <div class="col-md-2">
+      <label class="form-label">عدد الصفوف</label>
+      <input type="number" class="form-control" name="limit" value="{{ limit }}" min="10" max="200" onchange="this.form.submit()">
+    </div>
+
+    <div class="col-md-1 d-flex align-items-end">
+      <a class="btn btn-outline-success w-100" href="{% url 'core:bulk_grade_export' %}?{{ request.GET.urlencode }}">تنزيل CSV</a>
+    </div>
+    <div class="col-md-12 text-end text-muted">
+      إجمالي التسليمات ضمن الفلاتر: {{ total_pending }}
+    </div>
+  </form>
+</div>
+
+  <div class="card p-3">
+    <div class="sticky-tools mb-2 d-flex gap-2">
+      <button form="bulkForm" class="btn btn-primary btn-sm" onclick="return confirm('حفظ التغييرات المحددة؟')">حفظ المحدد</button>
+      <button type="button" class="btn btn-outline-secondary btn-sm" onclick="checkAll(true)">تحديد الكل</button>
+      <button type="button" class="btn btn-outline-secondary btn-sm" onclick="checkAll(false)">إلغاء التحديد</button>
+      <button type="button" class="btn btn-outline-success btn-sm" onclick="setAllStatus('GRADED')">تعيين الجميع: مصحّح</button>
+      <button type="button" class="btn btn-outline-warning btn-sm" onclick="setAllStatus('LATE')">تعيين الجميع: متأخّر</button>
+    </div>
+<div class="d-flex align-items-center gap-2">
+    <input id="uniformGrade" type="number" step="0.01" min="0" class="form-control form-control-sm" placeholder="درجة موحّدة">
+    <button type="button" class="btn btn-outline-primary btn-sm" onclick="applyUniformGrade(false)">طبّق على المحدّد</button>
+    <button type="button" class="btn btn-outline-primary btn-sm" onclick="applyUniformGrade(true)">طبّق على الجميع</button>
+  </div>
+  <div class="d-flex align-items-center gap-2">
+    <input id="uniformGrade" type="number" step="0.01" min="0" class="form-control form-control-sm" placeholder="درجة موحّدة">
+    <button type="button" class="btn btn-outline-primary btn-sm" onclick="applyUniformGrade(false)">طبّق على المحدّد</button>
+    <button type="button" class="btn btn-outline-primary btn-sm" onclick="applyUniformGrade(true)">طبّق على الجميع</button>
+  </div>
+    <form id="bulkForm" method="post">
+      {% csrf_token %}
+      {{ formset.management_form }}
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead>
+            <tr>
+              <th>اختيار</th>
+              <th>الطالب</th>
+              <th>الواجب</th>
+              <th>المجموعة</th>
+              <th>الحالة الحالية</th>
+              <th style="width:120px;">الدرجة</th>
+              <th style="width:160px;">الحالة الجديدة</th>
+              <th>تعليق</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for form in formset %}
+              {% with obj=form.instance %}
+              <tr>
+                <td>{{ form.select }}</td>
+                <td>{{ obj.student.first_name }} {{ obj.student.last_name }}</td>
+                <td>{{ obj.assignment.title }}</td>
+                <td>{{ obj.assignment.group.name }}</td>
+                <td><span class="badge bg-warning text-dark">{{ obj.get_status_display }}</span></td>
+                <td>{{ form.grade }}</td>
+                <td>{{ form.status }}</td>
+                <td>{{ form.feedback }}</td>
+              </tr>
+              <!-- لازم نعرض الحقول المخفية (id) -->
+              {{ form.id }}
+              {% endwith %}
+            {% empty %}
+              <tr><td colspan="8" class="text-center text-muted">لا توجد تسليمات بحاجة للتصحيح ضمن الفلاتر الحالية.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </form>
+  </div>
+
+  <script>
+    function checkAll(val){
+      document.querySelectorAll('input[type="checkbox"][name$="-select"]').forEach(cb => cb.checked = val);
+    }
+    function setAllStatus(st){
+      document.querySelectorAll('select[name$="-status"]').forEach(sel => { sel.value = st; });
+    }
+  </script>
+<script>
+  function checkAll(val){
+    document.querySelectorAll('input[type="checkbox"][name$="-select"]').forEach(cb => cb.checked = val);
+  }
+  function setAllStatus(st){
+    document.querySelectorAll('select[name$="-status"]').forEach(sel => sel.value = st);
+  }
+  function applyUniformGrade(applyAll){
+    const val = document.getElementById('uniformGrade').value;
+    if(val === "") { alert("أدخل درجة موحّدة أولًا"); return; }
+    const rows = document.querySelectorAll('input[name$="-grade"]'); // لو وِيدجت مختلف استخدم سيليكتر input[type=number][name$="-grade"]
+    document.querySelectorAll('tr').forEach(tr=>{
+      const gradeInput = tr.querySelector('input[name$="-grade"]');
+      const selectCb   = tr.querySelector('input[type="checkbox"][name$="-select"]');
+      if(!gradeInput) return;
+      if(applyAll || (selectCb && selectCb.checked)){
+        gradeInput.value = val;
+      }
+    });
+  }
+</script>
+
+</body>
+</html>

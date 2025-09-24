@@ -1,0 +1,309 @@
+{% extends "base.html" %}
+{% load static %}
+{% load misc %}
+
+{% block title %}بوابة الطالب{% endblock %}
+
+{% block content %}
+<style>
+  body{background:#f7fafc}
+  .kpi{
+    border-radius:12px;
+    background:#eef2ff;        /* فاتح */
+    color:#0f172a;              /* نص داكن */
+    padding:14px;
+  }
+  .kpi .num{font-weight:700;font-size:18px}
+  .card{border:0;border-radius:14px;box-shadow:0 10px 24px rgba(0,0,0,.06)}
+  .muted{color:#64748b}
+  .badge{font-weight:600}
+</style>
+
+<div class="container py-4">
+
+  <!-- هيدر -->
+  <div class="d-flex justify-content-between align-items-center mb-4">
+    <h1 class="h5 m-0">مرحباً {{ student.first_name }} 👋</h1>
+    <div class="d-flex gap-2">
+      <form method="post" action="{% url 'core:logout' %}" class="d-inline">{% csrf_token %}
+        <button class="btn btn-outline-secondary btn-sm" type="submit">تسجيل الخروج</button>
+      </form>
+      <a class="btn btn-outline-secondary btn-sm" href="{% url 'core:account_profile' %}">الملف الشخصي</a>
+    </div>
+  </div>
+
+  <!-- رسائل -->
+  {% if messages %}
+    <div class="mb-3">
+      {% for message in messages %}
+        <div class="alert alert-{{ message.tags }}">{{ message }}</div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  <!-- KPIs -->
+  <div class="row g-3 mb-4">
+    <div class="col-6 col-md-3"><div class="kpi text-center">
+      <div class="small text-muted">واجبات مفتوحة</div><div class="num">{{ open_assignments|length }}</div>
+    </div></div>
+    <div class="col-6 col-md-3"><div class="kpi text-center">
+      <div class="small text-muted">حصص هذا الأسبوع</div><div class="num">{{ upcoming_sessions|length }}</div>
+    </div></div>
+    <div class="col-6 col-md-3"><div class="kpi text-center">
+      <div class="small text-muted">آخر تسليمات</div><div class="num">{{ recent_submissions|length }}</div>
+    </div></div>
+    <div class="col-6 col-md-3"><div class="kpi text-center">
+      <div class="small text-muted">موارد جديدة</div><div class="num">{{ recent_resources|length }}</div>
+    </div></div>
+  </div>
+
+  <!-- تبويبات -->
+  <ul class="nav nav-tabs mb-3" role="tablist">
+    <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-assignments" type="button">واجباتي</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-schedule" type="button">جدول حصصي</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-submissions" type="button">تسليماتي ونتائجي</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-resources" type="button">موارد</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-checkin" type="button">الحضور (QR)</button></li>
+  </ul>
+
+  <div class="tab-content">
+
+    <!-- واجباتي -->
+    <div class="tab-pane fade show active" id="tab-assignments">
+      <div class="card p-3">
+        <h2 class="h6 mb-3">الواجبات المتاحة</h2>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle">
+            <thead>
+              <tr>
+                <th>العنوان</th>
+                <th>المجموعة</th>
+                <th>المادة</th>
+                <th>الموعد النهائي</th>
+                <th>الحالة</th>
+                <th>نتيجتي</th>
+                <th class="text-end">تسليم</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for a in open_assignments %}
+                {% with mysub=subs_map|get_item:a.id %}
+                <tr>
+                  <td>{{ a.title }}</td>
+                  <td>{{ a.group.name }}</td>
+                  <td>{% if a.subject %}{{ a.subject.name }}{% elif a.group.subject %}{{ a.group.subject.name }}{% else %}—{% endif %}</td>
+                  <td>{% if a.due_at %}{{ a.due_at|date:"Y-m-d H:i" }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+
+                  <td>
+                    {% if mysub %}
+                      <span class="badge bg-success">تم التسليم</span>
+                      {% if mysub.status == "LATE" %}
+                        <span class="badge bg-warning text-dark">متأخر</span>
+                      {% endif %}
+                    {% else %}
+                      <span class="badge bg-secondary">لم يُسلَّم بعد</span>
+                      {% if a.due_at and a.due_at|date:"U" < now_ts %}
+                        <span class="badge bg-warning text-dark">انتهى الوقت</span>
+                      {% endif %}
+                    {% endif %}
+                  </td>
+
+                  <td>
+                    {% if mysub and mysub.grade != None %}
+                      <span class="badge bg-primary">الدرجة: {{ mysub.grade }}</span>
+                      {% if mysub.feedback %}
+                        <span class="badge bg-info text-dark">تعليق متاح</span>
+                      {% endif %}
+                    {% elif mysub %}
+                      <span class="badge bg-light text-dark">قيد التصحيح</span>
+                    {% else %}
+                      <span class="text-muted">—</span>
+                    {% endif %}
+                  </td>
+
+                  <td class="text-end">
+                    {% if mysub %}
+                      <a class="btn btn-sm btn-outline-primary" href="{% url 'core:student_submission_view' mysub.id %}">عرض التسليم</a>
+                    {% else %}
+                      <a class="btn btn-sm btn-success" href="{% url 'core:student_assignment_submit' a.id %}">سلّم الآن</a>
+                    {% endif %}
+                  </td>
+                </tr>
+                {% endwith %}
+              {% empty %}
+                <tr><td colspan="7" class="text-center text-muted">لا توجد واجبات حالياً.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- جدول حصصي -->
+    <div class="tab-pane fade" id="tab-schedule">
+      <div class="card p-3">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <h2 class="h6 m-0">من {{ today }} إلى {{ next_week }}</h2>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-sm">
+            <thead><tr><th>التاريخ</th><th>الوقت</th><th>المجموعة</th><th>المادة</th><th>النمط</th></tr></thead>
+            <tbody>
+              {% for s in upcoming_sessions %}
+              <tr>
+                <td>{{ s.date }}</td>
+                <td>{{ s.start_time }}–{{ s.end_time }}</td>
+                <td>{{ s.group.name }}</td>
+                <td>{% if s.subject %}{{ s.subject.name }}{% elif s.group.subject %}{{ s.group.subject.name }}{% else %}—{% endif %}</td>
+                <td>{% if s.is_online %}<span class="badge bg-success">أونلاين</span>{% else %}<span class="badge bg-secondary">حضوري</span>{% endif %}</td>
+              </tr>
+              {% empty %}
+              <tr><td colspan="5" class="text-center text-muted">لا حصص قادمة خلال الأسبوع.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- تسليماتي ونتائجي -->
+    <div class="tab-pane fade" id="tab-submissions">
+      <div class="card p-3">
+        <h2 class="h6 mb-2">آخر التسليمات</h2>
+        <div class="table-responsive">
+          <table class="table table-sm">
+            <thead><tr><th>الواجب</th><th>المجموعة</th><th>الحالة</th><th>الدرجة</th><th>وقت التسليم</th><th></th></tr></thead>
+            <tbody>
+              {% for sub in recent_submissions %}
+              <tr>
+                <td>{{ sub.assignment.title }}</td>
+                <td>{{ sub.assignment.group.name }}</td>
+                <td>
+                  {% if sub.status == "GRADED" %}<span class="badge bg-success">مصحّح</span>
+                  {% elif sub.status == "LATE" %}<span class="badge bg-warning text-dark">متأخر</span>
+                  {% else %}<span class="badge bg-secondary">مسلّم</span>{% endif %}
+                </td>
+                <td>{% if sub.grade != None %}{{ sub.grade }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+                <td>{{ sub.submitted_at|date:"Y-m-d H:i" }}</td>
+                <td><a class="btn btn-sm btn-outline-primary" href="{% url 'core:student_submission_view' sub.id %}">عرض</a></td>
+              </tr>
+              {% empty %}
+              <tr><td colspan="6" class="text-center text-muted">لسه ما سلّمت شي.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- موارد -->
+    <div class="tab-pane fade" id="tab-resources">
+      <div class="card p-3">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <h2 class="h6 m-0">موارد حديثة</h2>
+          <small class="text-muted">آخر {{ recent_resources|length }} مورد</small>
+        </div>
+
+        <div class="table-responsive">
+          <table class="table table-sm align-middle">
+            <thead>
+              <tr>
+                <th>العنوان</th>
+                <th>النوع</th>
+                <th>المجموعة / الحصة</th>
+                <th>المادة</th>
+                <th>تاريخ</th>
+                <th class="text-end">رابط / ملف</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for r in recent_resources %}
+              <tr>
+                <td>{{ r.title }}</td>
+                <td>{{ r.get_kind_display }}</td>
+                <td>
+                  {% if r.session %}
+                    {{ r.session.group.name }} <span class="text-muted">/ {{ r.session.date }}</span>
+                  {% elif r.group %}
+                    {{ r.group.name }}
+                  {% else %} — {% endif %}
+                </td>
+                <td>{% if r.subject %}{{ r.subject.name }}{% else %}—{% endif %}</td>
+                <td>{{ r.created_at|date:"Y-m-d H:i" }}</td>
+                <td class="text-end">
+                  {% if r.url %}
+                    <a class="btn btn-sm btn-outline-primary" href="{{ r.url }}" target="_blank" rel="noopener">فتح الرابط</a>
+                  {% endif %}
+                  {% if r.file %}
+                    <a class="btn btn-sm btn-outline-secondary" href="{{ r.file.url }}" target="_blank" rel="noopener">تحميل الملف</a>
+                  {% endif %}
+                  {% if not r.url and not r.file %}
+                    <span class="text-muted">—</span>
+                  {% endif %}
+                </td>
+              </tr>
+              {% empty %}
+              <tr><td colspan="6" class="text-center text-muted">ما في موارد جديدة.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- الحضور (QR) -->
+    <div class="tab-pane fade" id="tab-checkin">
+      <div class="card p-3">
+        <h2 class="h6 mb-3">مسح رمز الحضور</h2>
+        <div id="reader" style="max-width:420px"></div>
+        <div class="small text-muted mt-2">اسمح للمتصفح باستخدام الكاميرا، ثم وجّهها نحو QR المعروض لدى المدرّس.</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ماسح QR -->
+<script src="https://unpkg.com/html5-qrcode"></script>
+<script>
+document.addEventListener("DOMContentLoaded", function(){
+  const tabButton = document.querySelector('[data-bs-target="#tab-checkin"]');
+  const el = document.getElementById("reader");
+  if(!tabButton || !el) return;
+
+  let html5QrCode = null;
+
+  function startScanner(){
+    if(html5QrCode) return; // already started
+    html5QrCode = new Html5Qrcode("reader");
+    Html5Qrcode.getCameras().then(cameras => {
+      const camId = (cameras && cameras.length) ? cameras[0].id : null;
+      if(!camId){ el.innerHTML = '<div class="text-danger">لا توجد كاميرا متاحة.</div>'; return; }
+      html5QrCode.start(
+        camId,
+        { fps: 10, qrbox: 250 },
+        function onScanSuccess(decodedText){
+          try{
+            if(decodedText.startsWith("http")){
+              window.location.href = decodedText;
+            }else{
+              window.location.href = decodedText;
+            }
+          }catch(e){
+            console.error(e);
+            alert("تعذّر قراءة الرمز. جرّب مرة أخرى.");
+          }
+        },
+        function onScanFailure(_e){ /* ignore */ }
+      );
+    }).catch(err => {
+      console.error(err);
+      el.innerHTML = '<div class="text-danger">فشل تهيئة الكاميرا.</div>';
+    });
+  }
+
+  // شغّل الماسح أول ما يفتح المستخدم تبويب الحضور
+  tabButton.addEventListener("shown.bs.tab", startScanner);
+});
+</script>
+{% endblock %}

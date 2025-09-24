@@ -1,0 +1,347 @@
+{% extends "base.html" %}
+{% load misc %}
+{% block content %}
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.rtl.min.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+<title>لوحة المدرّس</title>
+<style>
+  :root{
+    --bg-dark:#0f172a; --text-light:#e2e8f0; --muted:#94a3b8;
+    --card-radius:14px; --shadow:0 6px 24px rgba(15,23,42,.07);
+  }
+  body{background:#f8fafc}
+  .toolbar{position:sticky; top:0; z-index:1030; background:#fff; box-shadow:0 2px 10px rgba(15,23,42,.06)}
+  .toolbar .btn{border-radius:10px}
+  .kpi{border-radius:var(--card-radius); background:var(--bg-dark); color:var(--text-light); padding:16px; box-shadow:var(--shadow)}
+  .kpi .num{font-size:24px; font-weight:800}
+  .kpi .lbl{font-size:12px; color:var(--muted)}
+  .card{border-radius:var(--card-radius); box-shadow:var(--shadow); border:0}
+  .nav-tabs .nav-link{border:0; border-bottom:2px solid transparent}
+  .nav-tabs .nav-link.active{border-bottom-color:#0ea5e9; color:#0ea5e9; font-weight:700}
+  .table>thead th{color:#64748b; font-weight:600; font-size:12px; text-transform:uppercase}
+  .table td, .table th{vertical-align:middle}
+  .empty{padding:36px; text-align:center; color:#94a3b8}
+  code.small{font-size:.8rem}
+</style>
+</head>
+<body class="container py-3">
+
+  <!-- شريط علوي ثابت -->
+  <div class="toolbar rounded-3 px-3 py-2 mb-4">
+    <div class="d-flex justify-content-between align-items-center">
+      <div class="d-flex align-items-center gap-2">
+        <i class="bi bi-mortarboard fs-4 text-primary"></i>
+        <h1 class="h5 m-0">لوحة المدرّس</h1>
+      </div>
+      <div class="d-flex gap-2">
+        <a class="btn btn-outline-secondary btn-sm" href="{% url 'core:teacher_groups' %}">
+          <i class="bi bi-people"></i> مجموعاتي
+        </a>
+        <a class="btn btn-outline-secondary btn-sm" href="{% url 'core:parent_invoices' %}">
+          <i class="bi bi-receipt"></i> فواتير أولياء الأمور
+        </a>
+        <form method="post" action="{% url 'core:dashboard_generate_next_week' %}" class="d-inline">
+  {% csrf_token %}
+  <button class="btn btn-sm btn-outline-primary"
+          onclick="return confirm('تأكيد: توليد حصص الأسبوع القادم؟')">
+    توليد الأسبوع القادم
+  </button>
+</form>
+        <a class="btn btn-primary btn-sm" href="{% url 'core:dashboard' %}">
+          <i class="bi bi-arrow-repeat"></i> تحديث
+        </a>
+      </div>
+    </div>
+  </div>
+<form method="post" action="{% url 'core:logout' %}" class="d-inline">
+  {% csrf_token %}
+  <button type="submit" class="btn btn-outline-secondary btn-sm">تسجيل الخروج</button>
+</form>
+<a class="btn btn-outline-secondary btn-sm" href="{% url 'core:account_profile' %}">الملف الشخصي</a>
+
+  <!-- KPIs -->
+  <div class="row g-3 mb-4">
+    <div class="col-6 col-lg-3">
+      <div class="kpi d-flex align-items-center gap-3">
+        <i class="bi bi-collection fs-3"></i>
+        <div><div class="lbl">المجموعات</div><div class="num">{{ total_groups }}</div></div>
+      </div>
+    </div>
+    <div class="col-6 col-lg-3">
+      <div class="kpi d-flex align-items-center gap-3">
+        <i class="bi bi-person-vcard fs-3"></i>
+        <div><div class="lbl">الطلاب النشطون</div><div class="num">{{ total_students }}</div></div>
+      </div>
+    </div>
+    <div class="col-6 col-lg-3">
+      <div class="kpi d-flex align-items-center gap-3">
+        <i class="bi bi-calendar-event fs-3"></i>
+        <div><div class="lbl">حصص قادمة</div><div class="num">{{ upcoming_count }}</div></div>
+      </div>
+    </div>
+    <div class="col-6 col-lg-3">
+      <div class="kpi d-flex align-items-center gap-3">
+        <i class="bi bi-cash-coin fs-3"></i>
+        <div><div class="lbl">فواتير الشهر (مستحق/متأخر)</div><div class="num">{{ due_invoices }}</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- تبويبات -->
+  <ul class="nav nav-tabs mb-3" role="tablist">
+    <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-groups" type="button">المجموعات</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-sessions" type="button">الحصص القادمة</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-assignments" type="button">الواجبات</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-submissions" type="button">التسليمات</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-billing" type="button">الفوترة</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-resources" type="button">الموارد</button></li>
+  </ul>
+
+  <div class="tab-content">
+
+    <!-- المجموعات -->
+    <div class="tab-pane fade show active" id="tab-groups">
+      <div class="card p-3">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <div class="h6 m-0">مجموعاتك</div>
+          <form class="d-flex gap-2" method="get">
+            <select name="group" class="form-select form-select-sm" style="width:auto">
+              <option value="">كل المجموعات</option>
+              {% for g in groups %}
+                <option value="{{ g.id }}" {% if q_group|default:''|add:'' == g.id|stringformat:"s" %}selected{% endif %}>{{ g.name }}</option>
+              {% endfor %}
+            </select>
+            <button class="btn btn-sm btn-outline-secondary"><i class="bi bi-funnel"></i> تصفية</button>
+          </form>
+        </div>
+
+        {% if groups %}
+        <div class="table-responsive">
+          <table class="table table-sm align-middle">
+            <thead><tr>
+              <th>الاسم</th><th>السنة</th><th>المادة</th>
+              <th class="text-center">طلاب</th>
+              <th class="text-center">حصص قادمة</th>
+              <th class="text-end">إجراءات</th>
+            </tr></thead>
+            <tbody>
+              {% for g in groups %}
+              <tr>
+                <td class="fw-semibold">{{ g.name }}</td>
+                <td>{% if g.academic_year %}{{ g.academic_year.name }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+                <td>{% if g.subject %}<span class="badge bg-info-subtle text-dark">{{ g.subject.name }}</span>{% else %}<span class="text-muted">—</span>{% endif %}</td>
+                <td class="text-center">{{ enroll_counts|get_item:g.id|default:"0" }}</td>
+                <td class="text-center">{{ sess_counts|get_item:g.id|default:"0" }}</td>
+                <td class="text-end">
+                  <a class="btn btn-sm btn-outline-primary" href="{% url 'core:group_students' g.id %}"><i class="bi bi-people"></i> الطلاب</a>
+                  <a class="btn btn-sm btn-outline-secondary" href="{% url 'core:sessions_list' g.id %}"><i class="bi bi-calendar3"></i> الحصص</a>
+                  <a class="btn btn-sm btn-outline-success" href="{% url 'core:assignments_list' g.id %}"><i class="bi bi-clipboard-check"></i> الواجبات</a>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+          <div class="empty"><i class="bi bi-inboxes fs-3 d-block mb-2"></i> لا توجد مجموعات.</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- الحصص القادمة -->
+    <div class="tab-pane fade" id="tab-sessions">
+      <div class="card p-3">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <div class="h6 m-0">أقرب 10 حصص</div>
+          <a class="btn btn-sm btn-outline-primary" href="{% url 'core:teacher_groups' %}"><i class="bi bi-gear"></i> إدارة المجموعات</a>
+        </div>
+
+        {% if sessions %}
+        <div class="table-responsive">
+          <table class="table table-sm">
+            <thead><tr><th>التاريخ</th><th>الوقت</th><th>المجموعة</th><th>المادة</th><th>النمط</th><th class="text-end">أكشن</th></tr></thead>
+            <tbody>
+              {% for s in sessions %}
+              <tr>
+                <td>{{ s.date }}</td>
+                <td>{{ s.start_time }}–{{ s.end_time }}</td>
+                <td class="fw-semibold">{{ s.group.name }}</td>
+                <td>{% if s.subject %}{{ s.subject.name }}{% elif s.group.subject %}{{ s.group.subject.name }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+                <td>{% if s.is_online %}<span class="badge bg-success-subtle text-success"><i class="bi bi-wifi"></i> أونلاين</span>{% else %}<span class="badge bg-secondary-subtle text-secondary"><i class="bi bi-building"></i> حضوري</span>{% endif %}</td>
+                <td class="text-end">
+                  <a class="btn btn-sm btn-outline-dark" href="{% url 'core:session_qr_screen' s.id %}">
+                    <i class="bi bi-qr-code"></i> QR
+                  </a>
+                  <form method="post" action="{% url 'core:send_session_reminder_now' s.id %}" class="d-inline">{% csrf_token %}
+                    <button class="btn btn-sm btn-outline-warning" onclick="return confirm('إرسال تذكير الآن؟')"><i class="bi bi-bell"></i> تذكير</button>
+                  </form>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+          <div class="empty"><i class="bi bi-calendar-x fs-3 d-block mb-2"></i> لا توجد حصص قريبة.</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- الواجبات -->
+    <div class="tab-pane fade" id="tab-assignments">
+      <div class="card p-3">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <div class="h6 m-0">آخر 10 واجبات</div>
+          <a class="btn btn-sm btn-success" href="{% url 'core:assignment_quick_create' %}">
+            <i class="bi bi-plus-circle"></i> إضافة واجب سريع
+          </a>
+        </div>
+
+        {% if assignments %}
+        <div class="table-responsive">
+          <table class="table table-sm">
+            <thead><tr><th>العنوان</th><th>المجموعة</th><th>المادة</th><th>تاريخ الإسناد</th><th>الحد النهائي</th><th class="text-end">إشعار</th></tr></thead>
+            <tbody>
+              {% for a in assignments %}
+              <tr>
+                <td class="fw-semibold">{{ a.title }}</td>
+                <td>{{ a.group.name }}</td>
+                <td>{% if a.subject %}{{ a.subject.name }}{% elif a.group.subject %}{{ a.group.subject.name }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+                <td>{{ a.assigned_at|date:"Y-m-d H:i" }}</td>
+                <td>{% if a.due_at %}{{ a.due_at|date:"Y-m-d H:i" }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+                <td class="text-end">
+                  <form method="post" action="{% url 'core:notify_assignment_now' a.id %}" class="d-inline">{% csrf_token %}
+                    <button class="btn btn-sm btn-outline-primary"><i class="bi bi-send"></i> إشعار الآن</button>
+                  </form>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+          <div class="empty"><i class="bi bi-card-checklist fs-3 d-block mb-2"></i> لا واجبات.</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- التسليمات -->
+    <div class="tab-pane fade" id="tab-submissions">
+      <div class="card p-3">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <div class="h6 m-0">آخر تسليمات</div>
+          <a class="btn btn-sm btn-outline-dark" href="{% url 'core:bulk_grade' %}"><i class="bi bi-magic"></i> تصحيح جماعي</a>
+        </div>
+
+        {% if subs %}
+        <div class="table-responsive">
+          <table class="table table-sm">
+            <thead><tr><th>الطالب</th><th>الواجب</th><th>المجموعة</th><th>الحالة</th><th>وقت التسليم</th><th class="text-end">إجراء</th></tr></thead>
+            <tbody>
+              {% for s in subs %}
+              <tr>
+                <td>{{ s.student.first_name }} {{ s.student.last_name }}</td>
+                <td class="fw-semibold">{{ s.assignment.title }}</td>
+                <td>{{ s.assignment.group.name }}</td>
+                <td>
+                  {% if s.status == "GRADED" %}<span class="badge bg-success-subtle text-success"><i class="bi bi-check2-circle"></i> مصحّح</span>
+                  {% elif s.status == "LATE" %}<span class="badge bg-warning-subtle text-warning"><i class="bi bi-alarm"></i> متأخر</span>
+                  {% else %}<span class="badge bg-secondary-subtle text-secondary"><i class="bi bi-inbox"></i> مُسلَّم</span>{% endif %}
+                </td>
+                <td>{{ s.submitted_at|date:"Y-m-d H:i" }}</td>
+                <td class="text-end">
+                  <a class="btn btn-sm btn-outline-primary" href="{% url 'core:download_submission' s.id %}">
+                    <i class="bi bi-download"></i> تحميل
+                  </a>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+          <div class="empty"><i class="bi bi-inbox fs-3 d-block mb-2"></i> لا تسليمات حتى الآن.</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- الفوترة -->
+    <div class="tab-pane fade" id="tab-billing">
+      <div class="card p-3">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <div class="h6 m-0">فواتير {{ q_month }}/{{ q_year }}</div>
+          <form class="d-flex gap-2" method="get">
+            <input class="form-control form-control-sm" type="number" name="month" min="1" max="12" value="{{ q_month }}" style="width:90px">
+            <input class="form-control form-control-sm" type="number" name="year" value="{{ q_year }}" style="width:110px">
+            <button class="btn btn-sm btn-outline-secondary"><i class="bi bi-search"></i> اذهب</button>
+          </form>
+        </div>
+
+        {% if invoices %}
+        <div class="table-responsive">
+          <table class="table table-sm">
+            <thead><tr><th>الطالب</th><th>المجموعة</th><th>المبلغ</th><th>الحالة</th><th class="text-end">PDF</th></tr></thead>
+            <tbody>
+              {% for inv in invoices %}
+              <tr>
+                <td>{{ inv.student.first_name }} {{ inv.student.last_name }}</td>
+                <td>{% if inv.group %}{{ inv.group.name }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+                <td class="fw-semibold">{{ inv.amount_egp }}</td>
+                <td>
+                  {% if inv.status == 'PAID' %}<span class="badge bg-success"><i class="bi bi-check2-circle"></i> مدفوع</span>
+                  {% elif inv.status == 'OVERDUE' %}<span class="badge bg-danger"><i class="bi bi-exclamation-octagon"></i> متأخر</span>
+                  {% elif inv.status == 'CANCELED' %}<span class="badge bg-secondary"><i class="bi bi-x-circle"></i> ملغاة</span>
+                  {% else %}<span class="badge bg-warning text-dark"><i class="bi bi-hourglass-split"></i> مستحق</span>{% endif %}
+                </td>
+                <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="{% url 'core:invoice_pdf' inv.id %}"><i class="bi bi-filetype-pdf"></i> تحميل</a></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+          <div class="empty"><i class="bi bi-receipt fs-3 d-block mb-2"></i> لا فواتير للمدى المُحدد.</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- الموارد -->
+    <div class="tab-pane fade" id="tab-resources">
+      <div class="card p-3">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <div class="h6 m-0">موارد حديثة</div>
+          <a class="btn btn-sm btn-success" href="{% url 'core:resource_create' %}"><i class="bi bi-plus-circle"></i> إضافة مورد</a>
+        </div>
+
+        {% if resources %}
+        <div class="table-responsive">
+          <table class="table table-sm">
+            <thead><tr><th>العنوان</th><th>النوع</th><th>المجموعة/الحصة</th><th>المادة</th><th>تاريخ</th></tr></thead>
+            <tbody>
+            {% for r in resources %}
+              <tr>
+                <td class="fw-semibold">{{ r.title }}</td>
+                <td>{{ r.get_kind_display }}</td>
+                <td>{% if r.session %}{{ r.session.group.name }} / <span class="text-muted">{{ r.session.date }}</span>{% elif r.group %}{{ r.group.name }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+                <td>{% if r.subject %}{{ r.subject.name }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+                <td>{{ r.created_at|date:"Y-m-d" }}</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+          <div class="empty"><i class="bi bi-folder2-open fs-3 d-block mb-2"></i> لا موارد حتى الآن.</div>
+        {% endif %}
+      </div>
+    </div>
+
+  </div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body></html>
+{% endblock %}

@@ -1,0 +1,22 @@
+<!DOCTYPE html><html lang="ar" dir="rtl"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>تقرير {{ student.first_name }} {{ student.last_name }} - {{ report.month }}/{{ report.year }}</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.rtl.min.css">
+</head><body class="container py-4">
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="h5 mb-3">تقرير شهري: {{ student.first_name }} {{ student.last_name }} — {{ report.month }}/{{ report.year }}</h1>
+  <a class="btn btn-primary btn-sm"
+     href="{% url 'core:parent_report_pdf' student.id report.year report.month %}">
+     تحميل PDF
+  </a>
+  </div>
+  <div class="row g-3">
+    <div class="col-md-4"><div class="card p-3"><div>نسبة الحضور</div><div class="fw-bold fs-4">{{ report.attendance_pct }}%</div></div></div>
+    <div class="col-md-4"><div class="card p-3"><div>متوسط درجة الواجب</div><div class="fw-bold fs-4">{% if report.avg_homework_score %}{{ report.avg_homework_score }}{% else %}—{% endif %}</div></div></div>
+    <div class="col-md-4"><div class="card p-3"><div>تاريخ الإنشاء</div><div class="fw-bold">{{ report.created_at|date:"Y-m-d H:i" }}</div></div></div>
+    <div class="col-12"><div class="card p-3"><h2 class="h6">نِقاط القوة</h2><p class="m-0">{{ report.strengths|default:"—" }}</p></div></div>
+    <div class="col-12"><div class="card p-3"><h2 class="h6">نِقاط الضعف</h2><p class="m-0">{{ report.weaknesses|default:"—" }}</p></div></div>
+    <div class="col-12"><div class="card p-3"><h2 class="h6">توصيات</h2><p class="m-0">{{ report.recommendations|default:"—" }}</p></div></div>
+    <div class="col-12"><div class="card p-3"><h2 class="h6">تعليق المدرّس</h2><p class="m-0">{{ report.teacher_comment|default:"—" }}</p></div></div>
+  </div>
+</body></html>

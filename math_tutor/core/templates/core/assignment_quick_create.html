@@ -1,0 +1,63 @@
+{% load misc %}
+
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.rtl.min.css" rel="stylesheet">
+  <title>إضافة واجب سريع</title>
+</head>
+<body class="container py-4">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h1 class="h5 m-0">إضافة واجب سريع</h1>
+    <a class="btn btn-outline-secondary btn-sm" href="{% url 'core:dashboard' %}">رجوع للوحة</a>
+  </div>
+
+  <form method="post" class="card p-3">
+    {% csrf_token %}
+    <div class="mb-3">
+      <label class="form-label">{{ form.group.label }}</label>
+      {{ form.group|add_class:"form-select" }}
+      {% if form.group.help_text %}<div class="form-text">{{ form.group.help_text }}</div>{% endif %}
+      {% for e in form.group.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+    </div>
+
+    {% if form.fields.subject %}
+    <div class="mb-3">
+      <label class="form-label">{{ form.subject.label }}</label>
+      {{ form.subject|add_class:"form-select" }}
+      {% for e in form.subject.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="mb-3">
+      <label class="form-label">{{ form.title.label }}</label>
+      {{ form.title|add_class:"form-control" }}
+      {% for e in form.title.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label">{{ form.description.label }}</label>
+      {{ form.description|add_class:"form-control" }}
+      {% for e in form.description.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label">{{ form.due_at.label }}</label>
+      {{ form.due_at|add_class:"form-control" }}
+      <div class="form-text">{{ form.due_at.help_text }}</div>
+      {% for e in form.due_at.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+    </div>
+
+    <div class="d-flex gap-2">
+      <button class="btn btn-success" type="submit">حفظ</button>
+      <a class="btn btn-outline-secondary" href="{% url 'core:dashboard' %}">إلغاء</a>
+    </div>
+  </form>
+
+  <!-- فلتر add_class بسيط (لو ما عندك، تقدر تشيلّه وتخلي الحقول كما هي) -->
+  {% load static %}
+  {% comment %} لو عندك templatetags للـ add_class حلو، وإلا خليه من غيره {% endcomment %}
+</body>
+</html>

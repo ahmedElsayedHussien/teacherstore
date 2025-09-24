@@ -1,0 +1,13 @@
+تذكير بالحصة القادمة:
+
+المجموعة: {{ group.name }}
+التاريخ: {{ session.date }} — الوقت: {{ session.start_time }} إلى {{ session.end_time }}
+النمط: {% if session.is_online %}أونلاين{% else %}حضوري{% endif %}
+{% if session.is_online and session.meeting_link %}رابط اللقاء: {{ session.meeting_link }}{% endif %}
+
+الطالب: {{ student.first_name }} {{ student.last_name }}
+المادة: {% if subject_obj %}{{ subject_obj.name }}{% else %}—{% endif %}
+
+لوحة وليّ الأمر: {{ site_url }}/parent/
+
+— {{ site_name }}

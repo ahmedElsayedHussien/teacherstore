@@ -1,0 +1,46 @@
+<!doctype html><html lang="ar" dir="rtl"><head>
+<meta charset="utf-8">
+<style>
+  body{font-family: DejaVu Sans, Arial, sans-serif; direction: rtl; font-size: 12pt;}
+  h1{font-size:16pt;margin:0 0 8px}
+  .row{display:flex;justify-content:space-between;margin-bottom:8px}
+  .box{border:1px solid #ddd;padding:8px;border-radius:6px;margin-bottom:10px}
+  .muted{color:#666}
+  table{width:100%;border-collapse:collapse}
+  th,td{border:1px solid #ddd;padding:6px;text-align:right}
+</style>
+</head><body>
+  <div class="row">
+    <div>
+      <h1>فاتورة</h1>
+      <div class="muted">{{ inv.month }}/{{ inv.year }}</div>
+    </div>
+    <div style="text-align:left">
+      <div>{{ SITE_NAME }}</div>
+      <div class="muted">{{ SITE_URL }}</div>
+    </div>
+  </div>
+
+  <div class="box">
+    <strong>الطالب:</strong> {{ inv.student.first_name }} {{ inv.student.last_name }}<br>
+    <strong>وليّ الأمر:</strong> {{ inv.parent.user.username }}<br>
+    <strong>المجموعة:</strong> {% if inv.group %}{{ inv.group.name }}{% else %}—{% endif %}<br>
+    <strong>تاريخ الاستحقاق:</strong> {% if inv.due_date %}{{ inv.due_date }}{% else %}—{% endif %}
+  </div>
+
+  <table>
+    <thead><tr><th>البند</th><th>المبلغ (EGP)</th></tr></thead>
+    <tbody>
+      <tr><td>اشتراك شهر {{ inv.month }}/{{ inv.year }}</td><td>{{ inv.amount_egp }}</td></tr>
+      <tr><td><strong>المجموع</strong></td><td><strong>{{ inv.amount_egp }}</strong></td></tr>
+      <tr><td>المسدّد</td><td>{{ inv.total_paid }}</td></tr>
+      <tr><td><strong>المتبقّي</strong></td><td><strong>{{ inv.remaining }}</strong></td></tr>
+    </tbody>
+  </table>
+
+  {% if inv.notes %}
+  <div class="box"><strong>ملاحظات:</strong><br>{{ inv.notes }}</div>
+  {% endif %}
+
+  <div class="muted">حالة الفاتورة: {{ inv.get_status_display }}</div>
+</body></html>

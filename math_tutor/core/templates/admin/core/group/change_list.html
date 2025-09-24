@@ -1,0 +1,40 @@
+{% extends "admin/change_list.html" %}
+{% load i18n %}
+
+{% block object-tools-items %}
+  {{ block.super }}
+  <li>
+    <form method="post" action="{% url 'admin:core_group_generate_next_week' %}" style="display:inline;">
+      {% csrf_token %}
+      <button type="submit" class="button" style="margin-inline-start: .5rem;">
+        توليد حصص الأسبوع القادم (كل المجموعات)
+      </button>
+    </form>
+  </li>
+  <li>
+    <details style="display:inline-block; margin-inline-start:.5rem;">
+      <summary class="button">توليد لمعلّم محدّد</summary>
+      <div style="background:#fff;padding:.6rem;border:1px solid #ddd;margin-top:.4rem;">
+        <form method="post" action="" onsubmit="return goTeacher(event);">
+          {% csrf_token %}
+          <label for="teacherId">ID المدرّس:</label>
+          <input id="teacherId" type="number" min="1" style="width:120px;">
+          <button type="submit" class="button">توليد</button>
+        </form>
+        <small>يمكنك معرفة الـ ID من صفحة المدرّسين في الأدمن.</small>
+      </div>
+    </details>
+    <script>
+      function goTeacher(e){
+        e.preventDefault();
+        var id = document.getElementById('teacherId').value;
+        if(!id){ alert("أدخل ID المدرّس"); return false; }
+        // نوجّه POST إلى مسار المدرّس المحدّد
+        var form = e.target;
+        form.action = "{% url 'admin:core_group_generate_next_week_teacher' 0 %}".replace("/0/", "/" + id + "/");
+        form.submit();
+        return false;
+      }
+    </script>
+  </li>
+{% endblock %}

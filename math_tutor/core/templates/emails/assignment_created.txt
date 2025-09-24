@@ -1,0 +1,11 @@
+مرحباً،
+
+تم إضافة واجب جديد للمجموعة: {{ group.name }}
+عنوان الواجب: {{ assignment.title }}
+الموعد النهائي: {% if assignment.due_at %}{{ assignment.due_at|date:"Y-m-d H:i" }}{% else %}—{% endif %}
+
+الطالب: {{ student.first_name }} {{ student.last_name }}
+
+للمتابعة، تفضل بزيارة: {{ site_url }}/parent/
+
+— {{ site_name }}

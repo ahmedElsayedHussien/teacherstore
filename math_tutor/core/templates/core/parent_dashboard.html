@@ -1,0 +1,264 @@
+
+{% extends "base.html" %}
+{% load static %}
+{% block content %}
+<!DOCTYPE html><html lang="ar" dir="rtl"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>بوابة وليّ الأمر</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.rtl.min.css">
+<style>
+  body{background:#f8fafc}.card{border:0;border-radius:1rem;box-shadow:0 6px 18px rgba(0,0,0,.06)}
+  .muted{color:#64748b;font-size:.95rem}
+</style>
+</head><body class="container py-4">
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h1 class="h4 m-0">بوابة وليّ الأمر</h1>
+  <div class="d-flex gap-2">
+  <a class="btn btn-outline-secondary btn-sm" href="{% url 'core:account_profile' %}">الملف الشخصي</a>
+
+    <a class="btn btn-outline-secondary btn-sm" href="{% url 'core:logout' %}">تسجيل الخروج</a>
+
+
+
+  </div>
+</div>
+
+{% if messages %}
+  <div class="mb-3">
+    {% for message in messages %}
+      <div class="alert alert-{{ message.tags }}">{{ message }}</div>
+    {% endfor %}
+  </div>
+{% endif %}
+
+<!-- أبناؤك -->
+<div class="card p-3 mb-4">
+  <h2 class="h6 mb-2">أبناؤك</h2>
+  {% if kids %}
+    <ul class="m-0">
+      {% for s in kids %}
+        <li>{{ s.first_name }} {{ s.last_name }}</li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <div class="text-muted">لا يوجد طلاب مرتبطون بهذا الحساب.</div>
+  {% endif %}
+</div>
+
+<div class="row g-3">
+  <!-- الحصص القادمة -->
+  <div class="col-lg-6">
+    <div class="card p-3 h-100">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <h2 class="h6 m-0">الحصص القادمة</h2>
+        <small class="text-muted">من {{ today }} إلى {{ next_week }}</small>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm">
+          <thead><tr><th>التاريخ</th><th>الوقت</th><th>المجموعة</th><th>أونلاين</th></tr></thead>
+          <tbody>
+          {% for s in upcoming_sessions %}
+            <tr>
+              <td>{{ s.date }}</td>
+              <td>{{ s.start_time }}–{{ s.end_time }}</td>
+              <td>{{ s.group.name }}</td>
+              <td>{% if s.is_online %}<span class="badge bg-success">أونلاين</span>{% else %}<span class="badge bg-secondary">حضوري</span>{% endif %}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="4" class="text-center text-muted">لا توجد حصص قادمة.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- واجبات مفتوحة -->
+  <div class="col-lg-6">
+  <div class="card p-3 h-100">
+    <h2 class="h6 mb-2">الواجبات المفتوحة</h2>
+    <div class="table-responsive">
+      <table class="table table-sm">
+        <thead>
+          <tr>
+            <th>العنوان</th>
+            <th>المجموعة</th>
+            <th>المادة</th>
+            <th>الموعد النهائي</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for a in open_assignments %}
+            <tr>
+              <td>{{ a.title }}</td>
+              <td>{{ a.group.name }}</td>
+              <td>{% with subj=a.get_subject %}{% if subj %}{{ subj.name }}{% else %}<span class="text-muted">—</span>{% endif %}{% endwith %}</td>
+              <td>{% if a.due_at %}{{ a.due_at|date:"Y-m-d H:i" }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="4" class="text-center text-muted">لا توجد واجبات مفتوحة حالياً.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+  
+
+  <!-- آخر تسليمات -->
+  <div class="col-12">
+    <div class="card p-3">
+      <h2 class="h6 mb-2">آخر التسليمات والدرجات</h2>
+      <div class="table-responsive">
+        <table class="table table-sm">
+          <thead><tr><th>الطالب</th><th>الواجب</th><th>المجموعة</th><th>الحالة</th><th>الدرجة</th><th>وقت التسليم</th></tr></thead>
+          <tbody>
+          {% for sub in recent_submissions %}
+            <tr>
+              <td>{{ sub.student.first_name }} {{ sub.student.last_name }}</td>
+              <td>{{ sub.assignment.title }}</td>
+              <td>{{ sub.assignment.group.name }}</td>
+              <td>{{ sub.get_status_display }}</td>
+              <td>{% if sub.grade != None %}{{ sub.grade }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+              <td>{{ sub.submitted_at|date:"Y-m-d H:i" }}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="6" class="text-center text-muted">لا توجد تسليمات مؤخرًا.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- التقارير الشهرية -->
+  <div class="col-12">
+    <div class="card p-3">
+      <h2 class="h6 mb-2">أحدث التقارير الشهرية</h2>
+      {% if last_reports %}
+        <div class="table-responsive">
+          <table class="table table-sm">
+            <thead><tr><th>الطالب</th><th>الشهر</th><th>الحضور %</th><th>متوسط الواجب</th><th></th></tr></thead>
+            <tbody>
+  {% for s, rep in last_reports_pairs %}
+    <tr>
+      <td>{{ s.first_name }} {{ s.last_name }}</td>
+      <td>{{ rep.month }}/{{ rep.year }}</td>
+      <td>{{ rep.attendance_pct }}</td>
+      <td>{% if rep.avg_homework_score %}{{ rep.avg_homework_score }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+      <td>
+        <a class="btn btn-sm btn-outline-primary" href="{% url 'core:parent_report_view' s.id rep.year rep.month %}">عرض</a>
+        <a class="btn btn-sm btn-primary" href="{% url 'core:parent_report_pdf' s.id rep.year rep.month %}">PDF</a>
+      </td>
+    </tr>
+  {% empty %}
+    <tr><td colspan="5" class="text-center text-muted">لا توجد تقارير حتى الآن.</td></tr>
+  {% endfor %}
+</tbody>
+
+          </table>
+        </div>
+      {% else %}
+        <div class="text-muted">لا توجد تقارير حتى الآن.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+<!-- الفواتير والمدفوعات -->
+<div class="col-12">
+  <div class="card p-3">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <h2 class="h6 m-0">الفواتير والمدفوعات</h2>
+      <a class="btn btn-sm btn-outline-secondary" href="{% url 'core:parent_invoices' %}">عرض كل الفواتير</a>
+    </div>
+
+    <!-- ملخص -->
+    <div class="row g-3 mb-3">
+      <div class="col-6 col-md-3">
+        <div class="p-3 bg-light rounded">
+          <div class="small text-muted">إجمالي المستحق</div>
+          <div class="fw-bold">{{ billing.total_due }} جم</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="p-3 bg-light rounded">
+          <div class="small text-muted">إجمالي المتأخر</div>
+          <div class="fw-bold">{{ billing.total_overdue }} جم</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="p-3 bg-light rounded">
+          <div class="small text-muted">مدفوع هذا الشهر</div>
+          <div class="fw-bold">{{ billing.month_paid }} جم</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="p-3 bg-light rounded">
+          <div class="small text-muted">فواتير مفتوحة</div>
+          <div class="fw-bold">{{ billing.open_count }}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="row g-3">
+      <div class="col-lg-6">
+        <div class="table-responsive">
+          <table class="table table-sm">
+            <thead>
+              <tr><th>التاريخ</th><th>الطالب</th><th>المجموعة</th><th>المبلغ</th><th>الحالة</th><th class="text-end">PDF</th></tr>
+            </thead>
+            <tbody>
+              {% for inv in recent_invoices %}
+                <tr>
+                  <td>{{ inv.issued_at|date:"Y-m-d" }}</td>
+                  <td>{{ inv.student.first_name }} {{ inv.student.last_name }}</td>
+                  <td>{% if inv.group %}{{ inv.group.name }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+                  <td>{{ inv.amount_egp }}</td>
+                  <td>
+                    {% if inv.status == 'PAID' %}<span class="badge bg-success">مدفوع</span>
+                    {% elif inv.status == 'OVERDUE' %}<span class="badge bg-danger">متأخر</span>
+                    {% elif inv.status == 'CANCELED' %}<span class="badge bg-secondary">ملغاة</span>
+                    {% else %}<span class="badge bg-warning text-dark">مستحق</span>{% endif %}
+                  </td>
+                  <td class="text-end">
+                    <a class="btn btn-sm btn-outline-primary" href="{% url 'core:invoice_pdf' inv.id %}">تحميل</a>
+                  </td>
+                </tr>
+              {% empty %}
+                <tr><td colspan="6" class="text-center text-muted">لا توجد فواتير حديثة.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="col-lg-6">
+        <div class="table-responsive">
+          <table class="table table-sm">
+            <thead>
+              <tr><th>التاريخ</th><th>الطالب</th><th>المبلغ</th><th>طريقة</th><th>مرجع</th></tr>
+            </thead>
+            <tbody>
+              {% for p in recent_payments %}
+                <tr>
+                  <td>{{ p.received_at|date:"Y-m-d H:i" }}</td>
+                  <td>{{ p.invoice.student.first_name }} {{ p.invoice.student.last_name }}</td>
+                  <td>{{ p.amount_egp }}</td>
+                  <td>{{ p.get_method_display }}</td>
+                  <td>{% if p.reference %}<code class="small">{{ p.reference }}</code>{% else %}<span class="text-muted">—</span>{% endif %}</td>
+                </tr>
+              {% empty %}
+                <tr><td colspan="5" class="text-center text-muted">لا توجد مدفوعات حديثة.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+</body></html>
+{% endblock %}

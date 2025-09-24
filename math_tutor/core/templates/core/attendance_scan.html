@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% load static %}
+{% block content %}
+<div class="container py-4">
+
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h1 class="h5 m-0">تسجيل حضور الحصة</h1>
+    <a class="btn btn-outline-secondary btn-sm" href="{% url 'core:dashboard' %}">رجوع</a>
+  </div>
+
+  {% if messages %}
+    {% for m in messages %}
+      <div class="alert alert-{{ m.tags }}">{{ m }}</div>
+    {% endfor %}
+  {% endif %}
+
+  <div class="card p-3 mb-3">
+    <div class="row g-3">
+      <div class="col-lg-6">
+        <h2 class="h6">بيانات الحصة</h2>
+        <ul class="m-0">
+          <li>المجموعة: <strong>{{ session.group.name }}</strong></li>
+          <li>التاريخ: <strong>{{ session.date }}</strong></li>
+          <li>الوقت: <strong>{{ session.start_time }}–{{ session.end_time }}</strong></li>
+          <li>الوضع: {% if session.is_online %}<span class="badge bg-success">أونلاين</span>{% else %}<span class="badge bg-secondary">حضوري</span>{% endif %}</li>
+        </ul>
+      </div>
+      <div class="col-lg-6">
+        <h2 class="h6">توكن QR</h2>
+        {% if token %}
+          <div class="alert alert-success py-2 mb-2">تم إستلام التوكن بنجاح.</div>
+        {% else %}
+          <div class="alert alert-warning py-2 mb-2">يرجى مسح QR من شاشة المدرّس أو إدخال التوكن يدويًا.</div>
+        {% endif %}
+        <div class="mb-2 small text-muted">صلاحية التوكن قصيرة — يلزم تحديثه من شاشة المدرّس عند انتهاء الصلاحية.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3">
+    <!-- الماسح -->
+    <div class="col-lg-6">
+      <div class="card p-3 h-100">
+        <h2 class="h6 mb-2">مسح QR</h2>
+        <div id="qr-reader" style="width:100%;"></div>
+        <div class="small text-muted mt-2">عند المسح: لو الرابط يحتوي على <code>token=</code> سيتم تعبئة التوكن تلقائيًا. ولو يحتوي <code>code=</code> سيتم تعبئة كود الطالب كذلك.</div>
+      </div>
+    </div>
+
+    <!-- إدخال يدوي -->
+    <div class="col-lg-6">
+      <div class="card p-3 h-100">
+        <h2 class="h6 mb-2">إدخال يدوي</h2>
+        <form method="post" class="d-grid gap-2">{% csrf_token %}
+          <input type="hidden" name="session_id" value="{{ session.id }}">
+          <div class="mb-2">
+            <label class="form-label">توكن الحصة (QR Token)</label>
+            <input class="form-control" type="text" name="token" id="token-input" value="{{ token|default:'' }}" placeholder="الصق/امسح التوكن هنا">
+          </div>
+          <div class="mb-2">
+            <label class="form-label">كود الطالب (Check-in Code)</label>
+            <input class="form-control" type="text" name="code" id="code-input" placeholder="اكتب كود الطالب">
+          </div>
+          <button class="btn btn-primary">تسجيل حضور</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- الحضور المُسجّل -->
+  <div class="card p-3 mt-3">
+    <h2 class="h6 mb-2">الحضور المُسجّل</h2>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead><tr><th>#</th><th>الطالب</th><th>الكود</th><th>الحالة</th><th>ملاحظة</th></tr></thead>
+        <tbody>
+          {% for att in attendance_list %}
+            <tr>
+              <td>{{ forloop.counter }}</td>
+              <td>{{ att.student.first_name }} {{ att.student.last_name }}</td>
+              <td>{{ att.student.checkin_code|default:"—" }}</td>
+              <td>
+                {% if att.status == "PRESENT" %}<span class="badge bg-success">حاضر</span>
+                {% elif att.status == "LATE" %}<span class="badge bg-warning text-dark">متأخّر</span>
+                {% elif att.status == "EXCUSED" %}<span class="badge bg-info text-dark">معذور</span>
+                {% else %}<span class="badge bg-secondary">غائب</span>{% endif %}
+              </td>
+              <td>{{ att.note|default:"—" }}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="5" class="text-center text-muted">لا توجد سجلات حضور بعد.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<!-- html5-qrcode -->
+<script src="https://unpkg.com/html5-qrcode"></script>
+<script>
+(function(){
+  const qrDivId = "qr-reader";
+  function setField(id, val){ const el = document.getElementById(id); if(el){ el.value = val || ""; } }
+  function getParam(url, key){
+    try{
+      const u = new URL(url, window.location.origin);
+      return u.searchParams.get(key);
+    }catch(e){ return null; }
+  }
+
+  function handleScan(text){
+    // لو هو رابط فيه token/code
+    const tokenFromUrl = getParam(text, "token");
+    const codeFromUrl  = getParam(text, "code");
+    if(tokenFromUrl){ setField("token-input", tokenFromUrl); }
+    if(codeFromUrl){  setField("code-input",  codeFromUrl); }
+
+    // لو مش رابط: جرّب نعتبره كود طالب أو توكن
+    if(!tokenFromUrl && !codeFromUrl){
+      if(text && text.length <= 16){
+        // على الأغلب كود طالب قصير
+        setField("code-input", text);
+      }else{
+        // احتمال يكون توكن طويل
+        setField("token-input", text);
+      }
+    }
+  }
+
+  if(window.Html5Qrcode){
+    const qr = new Html5Qrcode(qrDivId);
+    Html5Qrcode.getCameras().then(cams => {
+      const camId = cams && cams.length ? cams[0].id : null;
+      if(!camId) return;
+      qr.start(
+        camId,
+        { fps: 10, qrbox: { width: 250, height: 250 } },
+        (decodedText) => { handleScan(decodedText); },
+        () => {}
+      ).catch(() => {});
+    }).catch(() => {});
+  }
+})();
+</script>
+{% endblock %}

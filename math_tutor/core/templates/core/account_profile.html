@@ -1,0 +1,83 @@
+{% load static %}
+<!doctype html><html lang="ar" dir="rtl"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.rtl.min.css">
+<title>الملف الشخصي</title>
+</head><body class="container py-4">
+
+<h1 class="h5 mb-3">الملف الشخصي</h1>
+
+{% if messages %}
+  {% for m in messages %}
+    <div class="alert alert-{{ m.tags }}">{{ m }}</div>
+  {% endfor %}
+{% endif %}
+
+<form method="post" action="{% url 'core:account_profile_save' %}">
+  {% csrf_token %}
+
+  <div class="card p-3 mb-3">
+    <h2 class="h6">بيانات الحساب</h2>
+    <div class="row g-2">
+      <div class="col-md-4">
+        <label class="form-label">الاسم الأول</label>
+        {{ user_form.first_name }}
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">اسم العائلة</label>
+        {{ user_form.last_name }}
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">البريد</label>
+        {{ user_form.email }}
+      </div>
+    </div>
+  </div>
+
+  {% if role == "teacher" %}
+  <div class="card p-3 mb-3">
+    <h2 class="h6">بيانات المدرّس</h2>
+    <div class="row g-2">
+      <div class="col-md-4">
+        <label class="form-label">الهاتف</label>
+        {{ t_form.phone }}
+      </div>
+    </div>
+  </div>
+  {% elif role == "parent" %}
+  <div class="card p-3 mb-3">
+    <h2 class="h6">بيانات وليّ الأمر</h2>
+    <div class="row g-2">
+      <div class="col-md-4">
+        <label class="form-label">الهاتف</label>
+        {{ p_form.phone }}
+      </div>
+    </div>
+  </div>
+  {% elif role == "student" %}
+  <div class="card p-3 mb-3">
+    <h2 class="h6">بيانات الطالب</h2>
+    <div class="row g-2">
+      <div class="col-md-4">
+        <label class="form-label">المدرسة</label>
+        {{ s_core_form.school_name }}
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">الهاتف</label>
+        {{ s_core_form.phone }}
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">البريد</label>
+        {{ s_core_form.email }}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="d-flex gap-2">
+    <button class="btn btn-primary">حفظ</button>
+    <a class="btn btn-outline-secondary" href="{% url 'core:password_change' %}">تغيير كلمة المرور</a>
+  </div>
+</form>
+
+</body></html>

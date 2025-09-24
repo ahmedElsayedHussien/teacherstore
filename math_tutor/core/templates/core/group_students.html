@@ -1,0 +1,22 @@
+<!doctype html><html lang="ar" dir="rtl"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.rtl.min.css" rel="stylesheet">
+<title>طلاب {{ group.name }}</title></head><body class="container py-4">
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="h5 m-0">طلاب {{ group.name }}</h1>
+  <a class="btn btn-outline-secondary btn-sm" href="{% url 'core:dashboard' %}">رجوع للوحة</a>
+</div>
+<table class="table table-sm align-middle">
+  <thead><tr><th>الاسم</th><th>كود الحضور</th></tr></thead>
+  <tbody>
+    {% for e in enrolls %}
+      <tr>
+        <td>{{ e.student.first_name }} {{ e.student.last_name }}</td>
+        <td class="font-monospace">{{ e.student.checkin_code }}</td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="2" class="text-center text-muted">لا طلاب.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</body></html>

@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container py-4">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h1 class="h5 m-0">إدارة طلاب المجموعة: {{ group.name }}</h1>
+    <a class="btn btn-outline-secondary btn-sm" href="{% url 'core:teacher_groups' %}">رجوع</a>
+  </div>
+
+  {% if messages %}
+    {% for m in messages %}
+      <div class="alert alert-{{ m.tags }}">{{ m }}</div>
+    {% endfor %}
+  {% endif %}
+
+  <div class="row g-3">
+    <div class="col-lg-6">
+      <div class="card p-3 h-100">
+        <h2 class="h6 mb-2">إضافة طلاب موجودين (IDs)</h2>
+        <form method="post" class="d-grid gap-2">{% csrf_token %}
+          <input type="hidden" name="action" value="add_existing">
+          {{ add_form.as_p }}
+          <button class="btn btn-primary btn-sm">إضافة</button>
+        </form>
+        <small class="text-muted">يمكنك الحصول على IDs من قائمة الطلاب في الأدمن أو من صفحات أخرى.</small>
+      </div>
+    </div>
+
+    <div class="col-lg-6">
+      <div class="card p-3 h-100">
+        <h2 class="h6 mb-2">إدخال طلاب جدد (Bulk)</h2>
+        <form method="post" class="d-grid gap-2">{% csrf_token %}
+          <input type="hidden" name="action" value="bulk_create">
+          {{ bulk_form.as_p }}
+          <button class="btn btn-success btn-sm">إنشاء وإضافة</button>
+        </form>
+        <div class="text-muted small mt-2">
+          الصيغة: <code>الاسم الأول الاسم الأخير, الهاتف, الإيميل</code> (الهاتف/الإيميل اختياريان)
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card p-3 mt-3">
+    <h2 class="h6 mb-2">طلاب المجموعة</h2>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead><tr><th>#</th><th>الطالب</th><th>الهاتف</th><th>الإيميل</th><th class="text-end">إزالة</th></tr></thead>
+        <tbody>
+          {% for enr in members %}
+          <tr>
+            <td>{{ forloop.counter }}</td>
+            <td>{{ enr.student.first_name }} {{ enr.student.last_name }}</td>
+            <td>{{ enr.student.phone|default:"—" }}</td>
+            <td>{{ enr.student.email|default:"—" }}</td>
+            <td class="text-end">
+              <form method="post" class="d-inline" onsubmit="return confirm('إزالة الطالب من المجموعة؟')">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="remove">
+                <input type="hidden" name="enrollment_id" value="{{ enr.id }}">
+                <button class="btn btn-sm btn-outline-danger">إزالة</button>
+              </form>
+            </td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="5" class="text-center text-muted">لا يوجد طلاب بعد.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
