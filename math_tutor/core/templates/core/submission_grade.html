@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container py-4">
+  <h1 class="h5 mb-3">تصحيح تسليم</h1>
+
+  <div class="card p-3 mb-3">
+    <div class="row g-3">
+      <div class="col-md-6">
+        <div><span class="text-muted">الطالب:</span> <strong>{{ sub.student.first_name }} {{ sub.student.last_name }}</strong></div>
+        <div><span class="text-muted">الواجب:</span> <strong>{{ sub.assignment.title }}</strong></div>
+        <div><span class="text-muted">المجموعة:</span> {{ sub.assignment.group.name }}</div>
+        <div><span class="text-muted">وقت التسليم:</span> {{ sub.submitted_at|date:"Y-m-d H:i" }}</div>
+        <div><span class="text-muted">الحالة الحالية:</span> {{ sub.get_status_display }}</div>
+      </div>
+      <div class="col-md-6 text-md-end">
+        {% if sub.file %}
+          <a class="btn btn-sm btn-outline-primary" href="{{ sub.file.url }}" target="_blank" rel="noopener">تحميل الملف</a>
+        {% endif %}
+        {% if sub.link %}
+          <a class="btn btn-sm btn-outline-secondary" href="{{ sub.link }}" target="_blank" rel="noopener">فتح الرابط</a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <form method="post" class="card p-3">
+    {% csrf_token %}
+    <div class="row g-3">
+      <div class="col-md-4">
+        <label class="form-label">الدرجة</label>
+        {{ form.grade }}
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">الحالة</label>
+        {{ form.status }}
+      </div>
+      <div class="col-12">
+        <label class="form-label">تعليق المدرّس</label>
+        {{ form.feedback }}
+      </div>
+    </div>
+    <div class="mt-3 d-flex gap-2">
+      <button class="btn btn-primary">حفظ</button>
+      <a class="btn btn-outline-secondary" href="{% url 'core:dashboard' %}">رجوع</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

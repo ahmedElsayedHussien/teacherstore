@@ -2,8 +2,9 @@
 from django import forms
 from django.utils.translation import gettext_lazy as _
 from .models import Assignment, Group, TeacherProfile
-
+from .models import Resource
 from .models import HomeworkSubmission
+from .models import Invoice, Payment, Group, Student, Enrollment
 
 class AssignmentQuickForm(forms.ModelForm):
     class Meta:
@@ -62,28 +63,28 @@ class AssignmentQuickForm(forms.ModelForm):
 
 class HomeworkBulkGradeForm(forms.ModelForm):
     # حقل غير مرتبط بالموديل لتحديد الصفوف المطلوب حفظها
-    select = forms.BooleanField(label=_("اختيار"), required=False)
+    select = forms.BooleanField(required=False, initial=False, label="")  # لتحديد الصف
 
     class Meta:
         model = HomeworkSubmission
-        fields = ["select", "grade", "status", "feedback"]
-        labels = {
-            "grade": _("الدرجة"),
-            "status": _("الحالة"),
-            "feedback": _("تعليق المدرّس"),
-        }
+        fields = ["id", "grade", "feedback", "status"]  # id حقل خفي
+
         widgets = {
             "grade": forms.NumberInput(
-                attrs={"class": "form-control", "step": "0.01", "min": "0"}
-            ),
-            "status": forms.Select(attrs={"class": "form-select"}),
-            "feedback": forms.Textarea(
                 attrs={
-                    "class": "form-control",
-                    "rows": 2,
-                    "placeholder": "ملاحظة قصيرة للطالب",
+                    "step": "0.01",
+                    "class": "form-control form-control-sm",
+                    "placeholder": "درجة",
                 }
             ),
+            "feedback": forms.Textarea(
+                attrs={
+                    "rows": 1,
+                    "class": "form-control form-control-sm",
+                    "placeholder": "تعليق (اختياري)",
+                }
+            ),
+            "status": forms.Select(attrs={"class": "form-select form-select-sm"}),
         }
 
     def clean(self):
@@ -137,3 +138,213 @@ class AddExistingStudentsForm(forms.Form):
         required=False,
         widget=forms.TextInput(attrs={"placeholder": "مثال: 12,15,27"}),
     )
+
+
+class SubmissionGradeForm(forms.ModelForm):
+    class Meta:
+        model = HomeworkSubmission
+        fields = ["grade", "feedback", "status"]
+        widgets = {
+            "grade": forms.NumberInput(attrs={"step": "0.01", "class": "form-control"}),
+            "feedback": forms.Textarea(attrs={"rows": 4, "class": "form-control"}),
+            "status": forms.Select(attrs={"class": "form-select"}),
+        }
+
+
+class ResourceForm(forms.ModelForm):
+    class Meta:
+        model = Resource
+        fields = ["title", "kind", "group", "session", "subject", "url", "file"]
+        widgets = {
+            "title": forms.TextInput(attrs={"class": "form-control"}),
+            "kind": forms.Select(attrs={"class": "form-select"}),
+            "group": forms.Select(attrs={"class": "form-select"}),
+            "session": forms.Select(attrs={"class": "form-select"}),
+            "subject": forms.Select(attrs={"class": "form-select"}),
+            "url": forms.URLInput(attrs={"class": "form-control"}),
+            "file": forms.ClearableFileInput(attrs={"class": "form-control"}),
+        }
+
+
+class InvoiceForm(forms.ModelForm):
+    class Meta:
+        
+        model = Invoice
+        fields = ["group", "student", "year", "month", "amount_egp", "due_date", "notes"]
+        widgets = {
+            "group":     forms.Select(attrs={"class": "form-select", "id": "id_group"}),
+            "student":   forms.Select(attrs={"class": "form-select", "id": "id_student", "disabled": "disabled"}),
+            "year":      forms.NumberInput(attrs={"class":"form-control","min":2020}),
+            "month":     forms.NumberInput(attrs={"class":"form-control","min":1,"max":12}),
+            "amount_egp":forms.NumberInput(attrs={"class":"form-control","step":"0.01","min":"0"}),
+            "due_date":  forms.DateInput(attrs={"type":"date","class":"form-control"}),
+            "notes":     forms.Textarea(attrs={"class":"form-control","rows":2}),
+        }
+        widgets = {
+            "parent": forms.Select(attrs={"class": "form-select"}),
+            "student": forms.Select(attrs={"class": "form-select"}),
+            "group": forms.Select(attrs={"class": "form-select"}),
+            "year": forms.NumberInput(attrs={"class": "form-control", "min": 2020}),
+            "month": forms.NumberInput(
+                attrs={"class": "form-control", "min": 1, "max": 12}
+            ),
+            "amount_egp": forms.NumberInput(
+                attrs={"class": "form-control", "step": "0.01"}
+            ),
+            "due_date": forms.DateInput(
+                attrs={"type": "date", "class": "form-control"}
+            ),
+            "notes": forms.Textarea(attrs={"class": "form-control", "rows": 2}),
+        }
+
+    def clean(self):
+        cleaned = super().clean()
+        student = cleaned.get("student")
+        group = cleaned.get("group")
+        # لو فيه جروب، تأكد إنه الطالب مسجّل فيه
+        if (
+            student
+            and group
+            and not Enrollment.objects.filter(
+                student=student, group=group, is_active=True
+            ).exists()
+        ):
+            self.add_error("group", "الطالب غير مسجّل في هذه المجموعة.")
+        # parent من بروفايل الطالب إن لم يُحدَّد
+        if student and not cleaned.get("parent"):
+            cleaned["parent"] = getattr(student, "parent", None)
+        return cleaned
+
+
+class InvoiceBulkForm(forms.Form):
+    group = forms.ModelChoiceField(
+        queryset=Group.objects.none(),
+        widget=forms.Select(attrs={"class": "form-select"}),
+        label="المجموعة",
+    )
+    year = forms.IntegerField(
+        min_value=2020,
+        widget=forms.NumberInput(attrs={"class": "form-control"}),
+        label="السنة",
+    )
+    month = forms.IntegerField(
+        min_value=1,
+        max_value=12,
+        widget=forms.NumberInput(attrs={"class": "form-control"}),
+        label="الشهر",
+    )
+    amount = forms.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        widget=forms.NumberInput(attrs={"class": "form-control", "step": "0.01"}),
+        label="المبلغ",
+    )
+
+    def __init__(self, *args, **kwargs):
+        teacher = kwargs.pop("teacher", None)
+        super().__init__(*args, **kwargs)
+        if teacher:
+            self.fields["group"].queryset = Group.objects.filter(
+                teacher=teacher
+            ).order_by("name")
+
+
+class PaymentForm(forms.ModelForm):
+    class Meta:
+        model = Payment
+        fields = ["amount_egp", "method", "reference", "received_at", "note"]
+        widgets = {
+            "amount_egp": forms.NumberInput(
+                attrs={"class": "form-control", "step": "0.01", "min": "0"}
+            ),
+            "method": forms.Select(attrs={"class": "form-select"}),
+            "reference": forms.TextInput(attrs={"class": "form-control"}),
+            "received_at": forms.DateTimeInput(
+                attrs={"type": "datetime-local", "class": "form-control"}
+            ),
+            "note": forms.TextInput(attrs={"class": "form-control"}),
+        }
+# core/forms.py
+from django import forms
+from .models import Invoice, Group, Student, Enrollment
+
+
+class InvoiceSimpleForm(forms.ModelForm):
+    class Meta:
+        model = Invoice
+        fields = [
+            "group",
+            "student",
+            "year",
+            "month",
+            "amount_egp",
+            "due_date",
+            "notes",
+        ]
+        widgets = {
+            "group": forms.Select(attrs={"class": "form-select", "id": "id_group"}),
+            "student": forms.Select(
+                attrs={
+                    "class": "form-select",
+                    "id": "id_student",
+                    "disabled": "disabled",
+                }
+            ),
+            "year": forms.NumberInput(attrs={"class": "form-control", "min": 2020}),
+            "month": forms.NumberInput(
+                attrs={"class": "form-control", "min": 1, "max": 12}
+            ),
+            "amount_egp": forms.NumberInput(
+                attrs={"class": "form-control", "step": "0.01", "min": "0"}
+            ),
+            "due_date": forms.DateInput(
+                attrs={"type": "date", "class": "form-control"}
+            ),
+            "notes": forms.Textarea(attrs={"class": "form-control", "rows": 2}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        teacher = kwargs.pop("teacher", None)
+        super().__init__(*args, **kwargs)
+        # فلترة المجموعات بمجموعات المدرّس
+        if teacher:
+            self.fields["group"].queryset = (
+                Group.objects.filter(teacher=teacher)
+                .select_related("academic_year")
+                .order_by("name")
+            )
+        else:
+            self.fields["group"].queryset = Group.objects.none()
+
+        # افتراضيًا لا طلاب حتى تُختار المجموعة
+        self.fields["student"].queryset = Student.objects.none()
+
+        # لو الفورم به قيمة group (POST أو instance) رشّح الطلاب
+        group = self.data.get("group") or (
+            self.instance.group_id if self.instance and self.instance.pk else None
+        )
+        if group:
+            self.fields["student"].widget.attrs.pop("disabled", None)
+            self.fields["student"].queryset = (
+                Student.objects.filter(
+                    enrollments__group_id=group, enrollments__is_active=True
+                )
+                .distinct()
+                .order_by("last_name", "first_name")
+            )
+
+    def clean(self):
+        cleaned = super().clean()
+        student = cleaned.get("student")
+        group = cleaned.get("group")
+        if not group:
+            self.add_error("group", "اختر المجموعة أولًا.")
+        if (
+            student
+            and group
+            and not Enrollment.objects.filter(
+                student=student, group=group, is_active=True
+            ).exists()
+        ):
+            self.add_error("student", "الطالب غير مسجّل في هذه المجموعة.")
+        return cleaned

@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container py-4">
+  <h1 class="h5 mb-3">إنشاء فاتورة</h1>
+
+  <form method="post" class="card p-3">
+    {% csrf_token %}
+    <div class="row g-3">
+      <div class="col-md-4">
+        <label class="form-label">المجموعة</label>
+        {{ form.group }}
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">الطالب</label>
+        {{ form.student }}
+        <div class="form-text">اختر المجموعة أولًا ليتم تحميل طلابها.</div>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">السنة</label>
+        {{ form.year }}
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">الشهر</label>
+        {{ form.month }}
+      </div>
+
+      <div class="col-md-4">
+        <label class="form-label">المبلغ (EGP)</label>
+        {{ form.amount_egp }}
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">تاريخ الاستحقاق</label>
+        {{ form.due_date }}
+      </div>
+      <div class="col-12">
+        <label class="form-label">ملاحظات</label>
+        {{ form.notes }}
+      </div>
+    </div>
+
+    <div class="mt-3 d-flex gap-2">
+      <button class="btn btn-primary">حفظ</button>
+      <a class="btn btn-outline-secondary" href="{% url 'core:dashboard' %}#tab-billing">إلغاء</a>
+    </div>
+  </form>
+</div>
+
+<script>
+(function(){
+  const groupSel = document.getElementById("id_group");
+  const studentSel = document.getElementById("id_student");
+
+  async function loadStudents(groupId){
+    if(!groupId){ studentSel.innerHTML = ""; studentSel.setAttribute("disabled","disabled"); return; }
+    const url = "{% url 'core:api_group_students' 0 %}".replace("/0/", "/"+groupId+"/");
+    studentSel.setAttribute("disabled","disabled");
+    studentSel.innerHTML = '<option value="">جاري التحميل...</option>';
+    try{
+      const resp = await fetch(url, {headers: {"X-Requested-With":"XMLHttpRequest"}});
+      const data = await resp.json();
+      studentSel.innerHTML = '<option value="">— اختر الطالب —</option>';
+      (data.results || []).forEach(it=>{
+        const opt = document.createElement("option");
+        opt.value = it.id;
+        opt.textContent = it.name;
+        studentSel.appendChild(opt);
+      });
+      studentSel.removeAttribute("disabled");
+    }catch(e){
+      console.error(e);
+      studentSel.innerHTML = '<option value="">تعذّر التحميل</option>';
+    }
+  }
+
+  if(groupSel){
+    groupSel.addEventListener("change", ev=>loadStudents(ev.target.value));
+    // لو الفورم رجع بأخطاء ومعه قيمة group بالفعل، حمّل القائمة مباشرة:
+    if(groupSel.value && studentSel && studentSel.options.length <= 1){
+      loadStudents(groupSel.value);
+    }else if(!groupSel.value){
+      studentSel.setAttribute("disabled","disabled");
+    }
+  }
+})();
+</script>
+{% endblock %}

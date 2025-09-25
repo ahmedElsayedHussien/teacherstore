@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container py-4">
+  <h1 class="h5 mb-3">
+    {% if mode == "edit" %}تعديل مورد{% else %}إضافة مورد{% endif %}
+  </h1>
+
+  <form method="post" enctype="multipart/form-data" class="card p-3">
+    {% csrf_token %}
+    <div class="row g-3">
+      <div class="col-md-6">
+        <label class="form-label">العنوان</label>
+        {{ form.title }}
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">النوع</label>
+        {{ form.kind }}
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">المادة</label>
+        {{ form.subject }}
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label">المجموعة (اختياري)</label>
+        {{ form.group }}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">الحصة (اختياري)</label>
+        {{ form.session }}
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label">رابط</label>
+        {{ form.url }}
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">ملف</label>
+        {{ form.file }}
+      </div>
+    </div>
+
+    <div class="mt-3 d-flex gap-2">
+      <button class="btn btn-primary">حفظ</button>
+      <a class="btn btn-outline-secondary" href="{% url 'core:dashboard' %}#tab-resources">إلغاء</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

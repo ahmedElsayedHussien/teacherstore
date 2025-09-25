@@ -8,6 +8,10 @@ from core.tasks import notify_assignment_created
 import base64, qrcode
 from io import BytesIO
 from urllib.parse import urlencode
+from .forms import SubmissionGradeForm
+from .forms import InvoiceForm, InvoiceBulkForm, PaymentForm
+from .forms import InvoiceSimpleForm
+from django.db import IntegrityError, transaction
 
 # ===== طرف ثالث =====
 from xhtml2pdf import pisa
@@ -40,8 +44,10 @@ from django.urls import reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.utils.http import url_has_allowed_host_and_scheme
-from django.views.decorators.http import require_http_methods, require_POST
+from django.views.decorators.http import require_http_methods, require_POST,require_GET
 from django.forms import modelformset_factory
+from .models import HomeworkSubmission, TeacherProfile
+
 
 # ===== مشروعك (local apps) =====
 from .decorators import student_required
@@ -66,13 +72,25 @@ from .models import (
 from .services.notify import notify_session_reminder
 from .services.scheduling import generate_next_7_days
 from .forms import GroupForm, BulkStudentsForm, AddExistingStudentsForm
+def _teacher_group_or_404(teacher, group_id: int):
+    return get_object_or_404(Group, pk=group_id, teacher=teacher)
+
+
+def _resource_queryset_for_teacher(teacher):
+    return Resource.objects.select_related("group", "session", "session__group").filter(
+        Q(group__teacher=teacher) | Q(session__group__teacher=teacher)
+    )
+
 
 @login_required
 def download_submission(request, submission_id: int):
     sub = get_object_or_404(HomeworkSubmission, id=submission_id)
 
     # تحقّق صلاحيات: معلّم المجموعة أو الطالب صاحب التسليم أو موظّف
-    if not (_is_teacher_of_submission(request.user, sub) or _is_owner_student(request.user, sub)):
+    if not (
+        _is_teacher_of_submission(request.user, sub)
+        or _is_owner_student(request.user, sub)
+    ):
         return HttpResponseForbidden("غير مصرّح لك بتنزيل هذا التسليم.")
 
     # 1) لو في ملف مرفوع → نزّله مباشرة
@@ -95,19 +113,42 @@ def download_submission(request, submission_id: int):
 
     # لا يوجد أي محتوى صالح للتنزيل
     return HttpResponse("لا يوجد ملف/رابط/نص في هذا التسليم.", status=404)
+
+
 from django.shortcuts import render, redirect, get_object_or_404
 
 from .models import Resource, Group, ClassSession, Subject
 
-from .models import  ClassSession, Enrollment,Assignment, Group, Subject
+from .models import ClassSession, Enrollment, Assignment, Group, Subject
 import base64
 from django.db.models import Sum, Q
+
+
+def home(request):
+    if request.user.is_authenticated:
+        return redirect("core:post_login_redirect")  # يودّي للداشبورد المناسب
+    return redirect("core:login")  # شاشة تسجيل الدخول
+
 
 def _get_parent(user):
     try:
         return ParentProfile.objects.get(user=user)
     except ParentProfile.DoesNotExist:
         return None
+
+
+def _teacher_groups(teacher):
+    return Group.objects.filter(teacher=teacher)
+
+
+def _invoice_qs_for_teacher(teacher):
+    return (
+        Invoice.objects.select_related("student", "parent", "group")
+        .filter(
+            Q(group__teacher=teacher) | Q(student__enrollments__group__teacher=teacher)
+        )
+        .distinct()
+    )
 
 
 def _require_group_owner(request, group: Group):
@@ -367,7 +408,19 @@ def teacher_dashboard(request):
 
     # المواد لفلترة/عرض
     subjects = Subject.objects.filter(is_active=True).order_by("name")
+    resources = (
+        Resource.objects.filter(Q(group__in=groups) | Q(session__group__in=groups))
+        .select_related("group", "subject", "session", "session__group")
+        .order_by("-created_at")[:15]
+    )
 
+    # (اختياري) لو عاوز فلترة بالـ subject من تبويب الموارد:
+    if q_subject:
+        resources = resources.filter(
+            Q(subject_id=q_subject)
+            | Q(session__subject_id=q_subject)
+            | Q(session__group__subject_id=q_subject)
+        )
     ctx = dict(
         groups=groups,
         enroll_counts=enroll_counts,
@@ -386,6 +439,7 @@ def teacher_dashboard(request):
         total_students=total_students,
         upcoming_count=upcoming_count,
         due_invoices=due_invoices,
+        resources=resources,  # ← مهم
     )
     return render(request, "core/teacher_dashboard.html", ctx)
 
@@ -494,81 +548,80 @@ def dashboard_generate_next_week(request):
     return redirect(reverse("core:dashboard"))
 
 
-@teacher_required
-@require_http_methods(["GET", "POST"])
+@login_required
 def bulk_grade(request):
-    teacher = request.teacher
+    # تحقّق أنه معلّم
+    try:
+        me = request.user.teacherprofile
+    except TeacherProfile.DoesNotExist:
+        messages.error(request, "صلاحية المعلم مطلوبة.")
+        return redirect("core:dashboard")
 
-    # نجيب تسليمات مواد المدرّس غير المصحّحة (وأيضًا المـتأخرة لو تحب تعدّلها)
-    base_qs = (
-        HomeworkSubmission.objects.filter(
-            assignment__group__teacher=teacher,
-            status__in=[
-                HomeworkSubmission.Status.SUBMITTED,
-                HomeworkSubmission.Status.LATE,
-            ],
+    # فلترة بسيطة
+    groups = Group.objects.filter(teacher=me).order_by("name")
+
+    qs = (
+        HomeworkSubmission.objects.select_related(
+            "student", "assignment", "assignment__group"
         )
-        .select_related("assignment", "student", "assignment__group")
+        .filter(assignment__group__teacher=me)
         .order_by("-submitted_at")
     )
-    status = request.GET.get("status")  # "SUBMITTED" | "LATE" | ""
-    if status in [HomeworkSubmission.Status.SUBMITTED, HomeworkSubmission.Status.LATE]:
-        base_qs = base_qs.filter(status=status)
 
-    date_from = request.GET.get("date_from")
-    date_to = request.GET.get("date_to")
+    active_group = request.GET.get("group") or ""
+    status = request.GET.get("status") or ""
+    date_from = request.GET.get("date_from") or ""
+    date_to = request.GET.get("date_to") or ""
+    limit = int(request.GET.get("limit") or 50)
+
+    if active_group:
+        qs = qs.filter(assignment__group_id=active_group)
+    if status in ("SUBMITTED", "LATE", "GRADED"):
+        qs = qs.filter(status=status)
     if date_from:
-        d = parse_date(date_from)
-        if d:
-            base_qs = base_qs.filter(submitted_at__date__gte=d)
+        qs = qs.filter(submitted_at__date__gte=parse_date(date_from))
     if date_to:
-        d = parse_date(date_to)
-        if d:
-            base_qs = base_qs.filter(submitted_at__date__lte=d)
-    # فلتر اختياري بالمجموعة عبر ?group=<id>
-    group_id = request.GET.get("group")
-    if group_id:
-        base_qs = base_qs.filter(assignment__group_id=group_id)
+        qs = qs.filter(submitted_at__date__lte=parse_date(date_to))
 
-    # حجم الدفعة (لتقليل طول الصفحة)
-    limit = int(request.GET.get("limit", "50"))
-    qs = base_qs[: max(1, min(limit, 200))]
+    qs = qs[:limit]
+    total_pending = qs.count()
 
     FormSet = modelformset_factory(
         HomeworkSubmission, form=HomeworkBulkGradeForm, extra=0, can_delete=False
     )
+
     if request.method == "POST":
         formset = FormSet(request.POST, queryset=qs)
         if formset.is_valid():
             saved = 0
             for form in formset:
-                if form.cleaned_data.get("select"):
-                    form.save()
-                    saved += 1
-            if saved:
-                messages.success(request, f"تم حفظ {saved} تسليم/تسليمات بنجاح ✅")
-            else:
-                messages.info(request, "لم يتم اختيار أي صف للحفظ.")
-            # الرجوع للصفحة نفسها مع نفس الفلاتر
-            return redirect(request.get_full_path())
+                if not form.cleaned_data.get("select"):
+                    continue  # احفظ المحدد فقط
+                sub = form.save(commit=False)
+                # اضبط الحالة تلقائيًا لو فيه درجة وما تم اختيار حالة
+                if sub.grade is not None and not form.cleaned_data.get("status"):
+                    sub.status = HomeworkSubmission.Status.GRADED
+                sub.save()
+                saved += 1
+            messages.success(request, f"تم حفظ {saved} صف/صفوف.")
+            # رجوع لنفس الصفحة مع نفس الفلاتر
+            return redirect(f"{request.path}?{request.GET.urlencode()}")
         else:
-            messages.error(request, "فضلاً صحّح الأخطاء في الحقول المظللة.")
+            messages.error(request, "تحقق من القيم المدخلة.")
     else:
         formset = FormSet(queryset=qs)
 
-    # قائمة مجموعات المدرّس للفِلتر
-    groups = Group.objects.filter(teacher=teacher).order_by("name")
-    context = {
-        "formset": formset,
+    ctx = {
         "groups": groups,
-        "active_group": int(group_id) if group_id else None,
+        "active_group": int(active_group) if active_group else "",
+        "status": status,
+        "date_from": date_from,
+        "date_to": date_to,
         "limit": limit,
-        "total_pending": base_qs.count(),
-        "status": status or "",
-        "date_from": date_from or "",
-        "date_to": date_to or "",
+        "total_pending": total_pending,
+        "formset": formset,
     }
-    return render(request, "core/bulk_grade.html", context)
+    return render(request, "core/bulk_grade.html", ctx)
 
 
 def _filtered_submissions_qs(request, teacher):
@@ -881,6 +934,8 @@ def send_session_reminder_now(request, session_id: int):
             "لم يتم إرسال أي تذكير (ربما لا يوجد أولياء أمور أو لا توجد إيميلات).",
         )
     return redirect(reverse("core:dashboard"))
+
+
 from django.shortcuts import render, get_object_or_404
 from django.http import HttpResponse
 from django.conf import settings
@@ -933,6 +988,8 @@ def invoice_pdf(request, invoice_id: int):
     filename = f"invoice_{inv.student.id}_{inv.year}_{inv.month}.pdf"
     resp["Content-Disposition"] = f'attachment; filename="{filename}"'
     return resp
+
+
 from django.views.decorators.http import require_POST
 from django.contrib import messages
 from django.shortcuts import redirect
@@ -1385,7 +1442,6 @@ def session_qr_refresh(request, session_id):
     query = urlencode({"token": session.qr_token})
     full_url = request.build_absolute_uri(f"{base_scan_url}?{query}")
     # استخدم full_url في توليد الـ QR كما هو عندك
-
 
     # ولّد صورة QR
     qr = qrcode.QRCode(
@@ -1873,3 +1929,201 @@ def student_self_checkin(request, session_id):
 
     messages.success(request, "تم تسجيل حضورك بنجاح ✅")
     return redirect("core:student_dashboard")
+
+
+@login_required
+def grade_submission(request, sub_id):
+    sub = get_object_or_404(
+        HomeworkSubmission.objects.select_related("assignment__group"), pk=sub_id
+    )
+
+    # تأكد أن المستخدم معلّم نفس المجموعة
+    try:
+        teacher_profile = request.user.teacherprofile
+    except TeacherProfile.DoesNotExist:
+        messages.error(request, "غير مصرح لك بالوصول.")
+        return redirect("core:dashboard")
+
+    if sub.assignment.group.teacher_id != teacher_profile.id:
+        messages.error(request, "لا تملك صلاحية تقييم هذا التسليم.")
+        return redirect("core:dashboard")
+
+    if request.method == "POST":
+        form = SubmissionGradeForm(request.POST, instance=sub)
+        if form.is_valid():
+            obj = form.save()
+
+            # لو أُدخلت درجة، غيّر الحالة تلقائياً إلى GRADED (إن لم يختَرها المعلم)
+            if obj.grade is not None and obj.status != HomeworkSubmission.Status.GRADED:
+                obj.status = HomeworkSubmission.Status.GRADED
+                obj.save(update_fields=["status"])
+
+            messages.success(request, "تم حفظ التقييم بنجاح.")
+            return redirect("core:dashboard")  # أو رجّعه لصفحة التسليمات لو عندك
+    else:
+        form = SubmissionGradeForm(instance=sub)
+
+    return render(
+        request,
+        "core/submission_grade.html",
+        {
+            "sub": sub,
+            "form": form,
+        },
+    )
+
+
+@teacher_required
+def resource_update(request, pk):
+    obj = get_object_or_404(_resource_queryset_for_teacher(request.teacher), pk=pk)
+    if request.method == "POST":
+        form = ResourceForm(request.POST, request.FILES, instance=obj)
+        if form.is_valid():
+            form.save()
+            messages.success(request, "تم تحديث المورد بنجاح.")
+            return redirect(reverse("core:dashboard") + "#tab-resources")
+    else:
+        form = ResourceForm(instance=obj)
+    return render(
+        request, "core/resource_form.html", {"form": form, "obj": obj, "mode": "edit"}
+    )
+
+
+@teacher_required
+@require_POST
+def resource_delete(request, pk):
+    obj = get_object_or_404(_resource_queryset_for_teacher(request.teacher), pk=pk)
+    obj.delete()
+    messages.success(request, "تم حذف المورد.")
+    return redirect(reverse("core:dashboard") + "#tab-resources")
+
+
+@teacher_required
+@require_http_methods(["GET", "POST"])
+def invoice_create(request):
+    form = InvoiceSimpleForm(request.POST or None, teacher=request.teacher)
+
+    if request.method == "POST" and form.is_valid():
+        inv = form.save(commit=False)
+
+        # حماية: تأكد أن الجروب تابع للمدرس
+        if inv.group.teacher_id != request.teacher.id:
+            messages.error(request, "لا تملك صلاحية لهذه المجموعة.")
+            return render(
+                request, "core/invoice_form.html", {"form": form, "mode": "create"}
+            )
+
+        # اربط وليّ الأمر تلقائيًا من بروفايل الطالب
+        inv.parent = getattr(inv.student, "parent", None)
+
+        try:
+            with transaction.atomic():
+                inv.save()
+        except IntegrityError:
+            messages.error(
+                request, "هناك فاتورة لنفس (الطالب/المجموعة/الشهر/السنة) موجودة بالفعل."
+            )
+            return render(
+                request, "core/invoice_form.html", {"form": form, "mode": "create"}
+            )
+
+        messages.success(request, "تم إنشاء الفاتورة بنجاح.")
+        return redirect(reverse("core:dashboard") + "#tab-billing")
+
+    return render(request, "core/invoice_form.html", {"form": form, "mode": "create"})
+
+
+@teacher_required
+@require_http_methods(["GET", "POST"])
+def invoice_update(request, pk):
+    inv = get_object_or_404(_invoice_qs_for_teacher(request.teacher), pk=pk)
+    form = InvoiceForm(request.POST or None, instance=inv)
+    form.fields["group"].queryset = _teacher_groups(request.teacher)
+    form.fields["student"].queryset = Student.objects.filter(
+        enrollments__group__teacher=request.teacher, enrollments__is_active=True
+    ).distinct()
+
+    if request.method == "POST" and form.is_valid():
+        inv = form.save()
+        # تحديث الحالة بناءً على المدفوعات
+        inv.refresh_status(commit=True)
+        messages.success(request, "تم تحديث الفاتورة.")
+        return redirect(reverse("core:dashboard") + "#tab-billing")
+    return render(
+        request, "core/invoice_form.html", {"form": form, "mode": "edit", "obj": inv}
+    )
+
+
+@teacher_required
+@require_POST
+def invoice_delete(request, pk):
+    inv = get_object_or_404(_invoice_qs_for_teacher(request.teacher), pk=pk)
+    inv.delete()
+    messages.success(request, "تم حذف الفاتورة.")
+    return redirect(reverse("core:dashboard") + "#tab-billing")
+
+
+@teacher_required
+@require_http_methods(["GET", "POST"])
+def invoice_bulk_create(request):
+    form = InvoiceBulkForm(request.POST or None, teacher=request.teacher)
+    created = skipped = 0
+    if request.method == "POST" and form.is_valid():
+        group = form.cleaned_data["group"]
+        year = form.cleaned_data["year"]
+        month = form.cleaned_data["month"]
+        amount = form.cleaned_data["amount"]
+        with transaction.atomic():
+            enrolls = Enrollment.objects.select_related(
+                "student", "student__parent"
+            ).filter(group=group, is_active=True)
+            for en in enrolls:
+                # ما تعملش دبلكيشن: نفس (parent, student, group, year, month)
+                inv, was_created = Invoice.objects.get_or_create(
+                    parent=en.student.parent,
+                    student=en.student,
+                    group=group,
+                    year=year,
+                    month=month,
+                    defaults={"amount_egp": amount},
+                )
+                if was_created:
+                    created += 1
+                else:
+                    skipped += 1
+        messages.success(
+            request, f"تم إنشاء {created} فاتورة. تم تجاهل {skipped} (موجودة مسبقًا)."
+        )
+        return redirect(reverse("core:dashboard") + "#tab-billing")
+    return render(request, "core/invoice_bulk_form.html", {"form": form})
+
+
+@teacher_required
+@require_http_methods(["GET", "POST"])
+def payment_create(request, pk):
+    inv = get_object_or_404(_invoice_qs_for_teacher(request.teacher), pk=pk)
+    form = PaymentForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        pay = form.save(commit=False)
+        pay.invoice = inv
+        pay.save()
+        inv.refresh_status(commit=True)
+        messages.success(request, "تم تسجيل السداد وتحديث حالة الفاتورة.")
+        return redirect(reverse("core:dashboard") + "#tab-billing")
+    return render(request, "core/payment_form.html", {"form": form, "invoice": inv})
+
+
+@teacher_required
+@require_GET
+def api_group_students(request, group_id: int):
+    # التحقق من ملكية المجموعة
+    _ = _teacher_group_or_404(request.teacher, group_id)
+    qs = (
+        Student.objects.filter(
+            enrollments__group_id=group_id, enrollments__is_active=True
+        )
+        .distinct()
+        .order_by("last_name", "first_name")
+    )
+    data = [{"id": s.id, "name": f"{s.first_name} {s.last_name}"} for s in qs]
+    return JsonResponse({"results": data})

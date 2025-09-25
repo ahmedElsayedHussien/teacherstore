@@ -141,6 +141,7 @@
                   <a class="btn btn-sm btn-outline-secondary" href="{% url 'core:sessions_list' g.id %}"><i class="bi bi-calendar3"></i> الحصص</a>
                   <a class="btn btn-sm btn-outline-success" href="{% url 'core:assignments_list' g.id %}"><i class="bi bi-clipboard-check"></i> الواجبات</a>
                 </td>
+                
               </tr>
               {% endfor %}
             </tbody>
@@ -257,6 +258,9 @@
                   <a class="btn btn-sm btn-outline-primary" href="{% url 'core:download_submission' s.id %}">
                     <i class="bi bi-download"></i> تحميل
                   </a>
+                  <a class="btn btn-sm btn-success" href="{% url 'core:grade_submission' s.id %}">
+    <i class="bi bi-pencil-square"></i> تصحيح
+  </a>
                 </td>
               </tr>
               {% endfor %}
@@ -306,6 +310,11 @@
         {% else %}
           <div class="empty"><i class="bi bi-receipt fs-3 d-block mb-2"></i> لا فواتير للمدى المُحدد.</div>
         {% endif %}
+        <div class="d-flex gap-2">
+  <a class="btn btn-sm btn-success" href="{% url 'core:invoice_create' %}">+ إنشاء فاتورة</a>
+  <a class="btn btn-sm btn-outline-primary" href="{% url 'core:invoice_bulk_create' %}">+ إنشاء جماعي</a>
+</div>
+
       </div>
     </div>
 
@@ -320,7 +329,7 @@
         {% if resources %}
         <div class="table-responsive">
           <table class="table table-sm">
-            <thead><tr><th>العنوان</th><th>النوع</th><th>المجموعة/الحصة</th><th>المادة</th><th>تاريخ</th></tr></thead>
+            <thead><tr><th>العنوان</th><th>النوع</th><th>المجموعة/الحصة</th><th>المادة</th><th>تاريخ</th><th class="text-end">إجراءات</th></tr></thead>
             <tbody>
             {% for r in resources %}
               <tr>
@@ -329,6 +338,30 @@
                 <td>{% if r.session %}{{ r.session.group.name }} / <span class="text-muted">{{ r.session.date }}</span>{% elif r.group %}{{ r.group.name }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
                 <td>{% if r.subject %}{{ r.subject.name }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
                 <td>{{ r.created_at|date:"Y-m-d" }}</td>
+                <td class="text-end">
+  <a class="btn btn-sm btn-outline-secondary" href="{% url 'core:resource_update' r.id %}">
+    <i class="bi bi-pencil-square"></i> تعديل
+  </a>
+  <form method="post" action="{% url 'core:resource_delete' r.id %}" class="d-inline"
+        onsubmit="return confirm('تأكيد حذف المورد؟ لا يمكن التراجع.')">
+    {% csrf_token %}
+    <button class="btn btn-sm btn-outline-danger">
+      <i class="bi bi-trash"></i> حذف
+    </button>
+  </form>
+</td><td class="text-end">
+  <a class="btn btn-sm btn-outline-success" href="{% url 'core:payment_create' inv.id %}">
+    تسجيل سداد
+  </a>
+  <a class="btn btn-sm btn-outline-secondary" href="{% url 'core:invoice_update' inv.id %}">
+    تعديل
+  </a>
+  <form method="post" action="{% url 'core:invoice_delete' inv.id %}" class="d-inline"
+        onsubmit="return confirm('حذف الفاتورة؟ لا يمكن التراجع.')">
+    {% csrf_token %}
+    <button class="btn btn-sm btn-outline-danger">حذف</button>
+  </form>
+</td>
               </tr>
             {% endfor %}
             </tbody>

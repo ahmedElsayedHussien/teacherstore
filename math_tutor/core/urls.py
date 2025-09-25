@@ -177,4 +177,29 @@ urlpatterns = [
         views.student_self_checkin,
         name="student_self_checkin",
     ),
+    path(
+        "dashboard/submission/<int:sub_id>/grade/",
+        views.grade_submission,
+        name="grade_submission",
+    ),
+    path("resources/<int:pk>/edit/", views.resource_update, name="resource_update"),
+    path("resources/<int:pk>/delete/", views.resource_delete, name="resource_delete"),
+    path("billing/invoice/new/", views.invoice_create, name="invoice_create"),
+    # إنشاء مستحقات جماعي لمجموعة/شهر
+    path(
+        "billing/invoice/bulk/", views.invoice_bulk_create, name="invoice_bulk_create"
+    ),
+    # تعديل/حذف
+    path("billing/invoice/<int:pk>/edit/", views.invoice_update, name="invoice_update"),
+    path(
+        "billing/invoice/<int:pk>/delete/", views.invoice_delete, name="invoice_delete"
+    ),
+    # تسجيل سداد لفاتورة
+    path("billing/invoice/<int:pk>/pay/", views.payment_create, name="payment_create"),
+    path("billing/invoice/new/", views.invoice_create, name="invoice_create"),
+    path(
+        "api/group/<int:group_id>/students/",
+        views.api_group_students,
+        name="api_group_students",
+    ),
 ]
