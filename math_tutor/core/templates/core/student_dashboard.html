@@ -1,18 +1,14 @@
 {% extends "base.html" %}
 {% load static %}
 {% load misc %}
+{% load querystring %}
 
 {% block title %}بوابة الطالب{% endblock %}
 
 {% block content %}
 <style>
   body{background:#f7fafc}
-  .kpi{
-    border-radius:12px;
-    background:#eef2ff;        /* فاتح */
-    color:#0f172a;              /* نص داكن */
-    padding:14px;
-  }
+  .kpi{border-radius:12px;background:#eef2ff;color:#0f172a;padding:14px}
   .kpi .num{font-weight:700;font-size:18px}
   .card{border:0;border-radius:14px;box-shadow:0 10px 24px rgba(0,0,0,.06)}
   .muted{color:#64748b}
@@ -22,15 +18,7 @@
 <div class="container py-4">
 
   <!-- هيدر -->
-  <div class="d-flex justify-content-between align-items-center mb-4">
-    <h1 class="h5 m-0">مرحباً {{ student.first_name }} 👋</h1>
-    <div class="d-flex gap-2">
-      <form method="post" action="{% url 'core:logout' %}" class="d-inline">{% csrf_token %}
-        <button class="btn btn-outline-secondary btn-sm" type="submit">تسجيل الخروج</button>
-      </form>
-      <a class="btn btn-outline-secondary btn-sm" href="{% url 'core:account_profile' %}">الملف الشخصي</a>
-    </div>
-  </div>
+ 
 
   <!-- رسائل -->
   {% if messages %}
@@ -41,19 +29,23 @@
     </div>
   {% endif %}
 
-  <!-- KPIs -->
+  <!-- KPIs (تعتمد على paginator.count للـ Page objects) -->
   <div class="row g-3 mb-4">
     <div class="col-6 col-md-3"><div class="kpi text-center">
-      <div class="small text-muted">واجبات مفتوحة</div><div class="num">{{ open_assignments|length }}</div>
+      <div class="small text-muted">واجبات مفتوحة</div>
+      <div class="num">{{ assignments.paginator.count }}</div>
     </div></div>
     <div class="col-6 col-md-3"><div class="kpi text-center">
-      <div class="small text-muted">حصص هذا الأسبوع</div><div class="num">{{ upcoming_sessions|length }}</div>
+      <div class="small text-muted">حصص هذا الأسبوع</div>
+      <div class="num">{{ sessions.paginator.count }}</div>
     </div></div>
     <div class="col-6 col-md-3"><div class="kpi text-center">
-      <div class="small text-muted">آخر تسليمات</div><div class="num">{{ recent_submissions|length }}</div>
+      <div class="small text-muted">آخر تسليمات</div>
+      <div class="num">{{ submissions.paginator.count }}</div>
     </div></div>
     <div class="col-6 col-md-3"><div class="kpi text-center">
-      <div class="small text-muted">موارد جديدة</div><div class="num">{{ recent_resources|length }}</div>
+      <div class="small text-muted">موارد جديدة</div>
+      <div class="num">{{ resources.paginator.count }}</div>
     </div></div>
   </div>
 
@@ -64,6 +56,7 @@
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-submissions" type="button">تسليماتي ونتائجي</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-resources" type="button">موارد</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-checkin" type="button">الحضور (QR)</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-att" type="button">الحضور</button></li>
   </ul>
 
   <div class="tab-content">
@@ -86,7 +79,7 @@
               </tr>
             </thead>
             <tbody>
-              {% for a in open_assignments %}
+              {% for a in assignments %}
                 {% with mysub=subs_map|get_item:a.id %}
                 <tr>
                   <td>{{ a.title }}</td>
@@ -135,6 +128,7 @@
               {% endfor %}
             </tbody>
           </table>
+          {% include "partials/pagination.html" with page_obj=assignments page_param="page_assg" %}
         </div>
       </div>
     </div>
@@ -149,7 +143,7 @@
           <table class="table table-sm">
             <thead><tr><th>التاريخ</th><th>الوقت</th><th>المجموعة</th><th>المادة</th><th>النمط</th></tr></thead>
             <tbody>
-              {% for s in upcoming_sessions %}
+              {% for s in sessions %}
               <tr>
                 <td>{{ s.date }}</td>
                 <td>{{ s.start_time }}–{{ s.end_time }}</td>
@@ -162,6 +156,7 @@
               {% endfor %}
             </tbody>
           </table>
+          {% include "partials/pagination.html" with page_obj=sessions page_param="page_sched" %}
         </div>
       </div>
     </div>
@@ -174,7 +169,7 @@
           <table class="table table-sm">
             <thead><tr><th>الواجب</th><th>المجموعة</th><th>الحالة</th><th>الدرجة</th><th>وقت التسليم</th><th></th></tr></thead>
             <tbody>
-              {% for sub in recent_submissions %}
+              {% for sub in submissions %}
               <tr>
                 <td>{{ sub.assignment.title }}</td>
                 <td>{{ sub.assignment.group.name }}</td>
@@ -192,6 +187,7 @@
               {% endfor %}
             </tbody>
           </table>
+          {% include "partials/pagination.html" with page_obj=submissions page_param="page_subs" %}
         </div>
       </div>
     </div>
@@ -201,7 +197,7 @@
       <div class="card p-3">
         <div class="d-flex justify-content-between align-items-center mb-2">
           <h2 class="h6 m-0">موارد حديثة</h2>
-          <small class="text-muted">آخر {{ recent_resources|length }} مورد</small>
+          <small class="text-muted">نتائج الصفحة الحالية: {{ resources|length }} من {{ resources.paginator.count }}</small>
         </div>
 
         <div class="table-responsive">
@@ -217,7 +213,7 @@
               </tr>
             </thead>
             <tbody>
-              {% for r in recent_resources %}
+              {% for r in resources %}
               <tr>
                 <td>{{ r.title }}</td>
                 <td>{{ r.get_kind_display }}</td>
@@ -247,6 +243,7 @@
               {% endfor %}
             </tbody>
           </table>
+          {% include "partials/pagination.html" with page_obj=resources page_param="page_res" %}
         </div>
       </div>
     </div>
@@ -257,6 +254,56 @@
         <h2 class="h6 mb-3">مسح رمز الحضور</h2>
         <div id="reader" style="max-width:420px"></div>
         <div class="small text-muted mt-2">اسمح للمتصفح باستخدام الكاميرا، ثم وجّهها نحو QR المعروض لدى المدرّس.</div>
+      </div>
+    </div>
+
+    <!-- الحضور (جدول ونِسب) -->
+    <div class="tab-pane fade" id="tab-att">
+      <div class="card p-3">
+        <form class="d-flex gap-2 mb-3" method="get">
+          <input type="date" class="form-control form-control-sm" name="att_from" value="{{ student_attendance.from }}" style="width:160px">
+          <input type="date" class="form-control form-control-sm" name="att_to" value="{{ student_attendance.to }}" style="width:160px">
+          <button class="btn btn-sm btn-outline-secondary">تصفية</button>
+        </form>
+
+        <div class="row g-3 mb-2">
+          <div class="col-6 col-lg-3"><div class="kpi text-center">
+            <div class="small text-muted">نسبة الحضور</div>
+            <div class="num">{{ student_attendance.stats.pct_present }}%</div>
+          </div></div>
+          <div class="col-6 col-lg-3"><div class="kpi text-center">
+            <div class="small text-muted">حاضر</div>
+            <div class="num">{{ student_attendance.stats.present }}</div>
+          </div></div>
+          <div class="col-6 col-lg-3"><div class="kpi text-center">
+            <div class="small text-muted">غائب</div>
+            <div class="num">{{ student_attendance.stats.absent }}</div>
+          </div></div>
+          <div class="col-6 col-lg-3"><div class="kpi text-center">
+            <div class="small text-muted">متأخر</div>
+            <div class="num">{{ student_attendance.stats.late }}</div>
+          </div></div>
+        </div>
+
+        <div class="table-responsive">
+          <table class="table table-sm">
+            <thead><tr><th>التاريخ</th><th>الوقت</th><th>المجموعة</th><th>الحالة</th><th>ملاحظة</th></tr></thead>
+            <tbody>
+              {% for a in student_attendance.recent %}
+              <tr>
+                <td>{{ a.session.date }}</td>
+                <td>{{ a.session.start_time }}–{{ a.session.end_time }}</td>
+                <td>{{ a.session.group.name }}</td>
+                <td>{{ a.get_status_display }}</td>
+                <td>{{ a.note|default:"—" }}</td>
+              </tr>
+              {% empty %}
+              <tr><td colspan="5" class="text-center text-muted">لا سجلات ضمن المدى.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
       </div>
     </div>
 
@@ -274,7 +321,7 @@ document.addEventListener("DOMContentLoaded", function(){
   let html5QrCode = null;
 
   function startScanner(){
-    if(html5QrCode) return; // already started
+    if(html5QrCode) return;
     html5QrCode = new Html5Qrcode("reader");
     Html5Qrcode.getCameras().then(cameras => {
       const camId = (cameras && cameras.length) ? cameras[0].id : null;
@@ -302,7 +349,6 @@ document.addEventListener("DOMContentLoaded", function(){
     });
   }
 
-  // شغّل الماسح أول ما يفتح المستخدم تبويب الحضور
   tabButton.addEventListener("shown.bs.tab", startScanner);
 });
 </script>

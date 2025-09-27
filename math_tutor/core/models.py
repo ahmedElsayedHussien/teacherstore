@@ -73,11 +73,17 @@ class AcademicYear(models.Model):
 
 class Group(models.Model):
     class Grade(models.TextChoices):
-        G1 = "G1", _("الصف الرابع")
-        G2 = "G2", _("الصف الخامس")
-        G3 = "G3", _("الصف 1 اعدادي")
-        G4 = "G4", _("الصف 2 اعدادي")
-        G5 = "G5", _("الصف 3 اعدادي")
+        G1 = "G1", _("الصف 1 الابتدائي")
+        G2 = "G2", _("الصف 2 الابتدائي")
+        G3 = "G3", _("الصف 3 الابتدائي  ")
+        G4 = "G4", _("الصف 4 الابتدائي")
+        G5 = "G5", _("الصف 5 الابتدائي")
+        G6 = "G6",_("الصف 1 الاعدادي")
+        G7 = "G7", _("الصف 2 الاعدادي")
+        G8 = "G8", _("الصف 3 الاعدادي")
+        G9 = "G9", _("الصف 1 الثانوي")
+        G10 = "G10",_("الصف 2 الثانوي")
+        G11 = "G11", _("الصف 3 الثانوي")
 
         OTHER = "OTHER", _("أخرى")
 
@@ -93,14 +99,15 @@ class Group(models.Model):
     teacher = models.ForeignKey(
         TeacherProfile,
         on_delete=models.PROTECT,
-        related_name="groups",
+        related_name="teachergroups",
         verbose_name=_("المدرّس"),
     )
     subject = models.ForeignKey(
         Subject,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
+        on_delete=models.PROTECT,
+        null=False,
+        blank=False,
+        related_name="groupssubject",
         verbose_name=_("المادة (افتراضي)"),
     )
     note = models.TextField(_("ملاحظات"), blank=True)
@@ -111,6 +118,11 @@ class Group(models.Model):
 
     def __str__(self):
         return f"{self.name} - {self.academic_year.name}"
+
+    def clean(self):
+        super().clean()
+        if not self.subject_id:
+            raise ValidationError({"subject": _("يجب تحديد المادة للمجموعة.")})
 
 
 class Student(models.Model):
@@ -171,7 +183,19 @@ class Enrollment(models.Model):
     def __str__(self):
         return f"{self.student} ← {self.group}"
 
-
+    def clean(self):
+        super().clean()
+        if self.group_id and self.is_active:
+            subject = self.group.subject
+            if subject:
+                conflict = (
+                    Enrollment.objects
+                    .filter(student=self.student, is_active=True, group__subject=subject)
+                    .exclude(pk=self.pk)
+                    .exists()
+                )
+                if conflict:
+                    raise ValidationError(_("هذا الطالب مسجّل بالفعل في مجموعة أخرى لنفس المادة."))
 class WeeklyScheduleBlock(models.Model):
     class Weekday(models.IntegerChoices):
         MON = 1, _("الاثنين")

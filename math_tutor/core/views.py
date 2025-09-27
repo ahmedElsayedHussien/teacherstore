@@ -12,7 +12,11 @@ from .forms import SubmissionGradeForm
 from .forms import InvoiceForm, InvoiceBulkForm, PaymentForm
 from .forms import InvoiceSimpleForm
 from django.db import IntegrityError, transaction
-
+from core.tasks import send_session_reminders_window_task, _send_window_logic
+from kombu.exceptions import OperationalError
+from django.utils import timezone
+from .models import Attendance, Enrollment, Group
+from .queries import attendance_window_q, annotate_attendance_counts, pct
 # ===== طرف ثالث =====
 from xhtml2pdf import pisa
 from reportlab.pdfbase import pdfmetrics
@@ -47,7 +51,13 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_http_methods, require_POST,require_GET
 from django.forms import modelformset_factory
 from .models import HomeworkSubmission, TeacherProfile
-
+from django.db.models import Q, Exists, OuterRef
+from django.db.models import Q, Count, Sum, F, Value
+from django.db.models.functions import Coalesce
+from django.utils import timezone
+from decimal import Decimal
+from django.db.models import Q, Count, Sum, F, Value, DecimalField, ExpressionWrapper
+from django.db.models.functions import Coalesce
 
 # ===== مشروعك (local apps) =====
 from .decorators import student_required
@@ -72,6 +82,9 @@ from .models import (
 from .services.notify import notify_session_reminder
 from .services.scheduling import generate_next_7_days
 from .forms import GroupForm, BulkStudentsForm, AddExistingStudentsForm
+from .utiils import paginate
+from datetime import date as _date
+
 def _teacher_group_or_404(teacher, group_id: int):
     return get_object_or_404(Group, pk=group_id, teacher=teacher)
 
@@ -80,6 +93,13 @@ def _resource_queryset_for_teacher(teacher):
     return Resource.objects.select_related("group", "session", "session__group").filter(
         Q(group__teacher=teacher) | Q(session__group__teacher=teacher)
     )
+
+from django.core.paginator import Paginator
+
+
+def paginate(request, qs, per_page=10, page_param="page"):
+    pg = Paginator(qs, per_page)
+    return pg.get_page(request.GET.get(page_param))
 
 
 @login_required
@@ -206,99 +226,210 @@ def parent_required(view_func):
 
 @parent_required
 def parent_dashboard(request):
-    parent = request.parent  # حسب الديكوريتر اللي عندنا
+    parent = request.parent
     today = timezone.localdate()
     next_week = today + timezone.timedelta(days=7)
 
     kids = Student.objects.filter(parent=parent).order_by("first_name", "last_name")
+    kids_ids = list(kids.values_list("id", flat=True))
 
-    # الحصص القادمة لأبناء وليّ الأمر خلال أسبوع
-    upcoming_sessions = (
+    # ـــــــــــ خريطة: كل مجموعة -> الأبناء المنسوبين لها ـــــــــــ
+    enroll_rows = Enrollment.objects.filter(
+        student_id__in=kids_ids, is_active=True
+    ).values(
+        "group_id",
+        "student_id",
+        "student__first_name",
+        "student__last_name",
+    )
+    group_children_map = {}
+    for r in enroll_rows:
+        group_children_map.setdefault(r["group_id"], []).append(
+            {
+                "id": r["student_id"],
+                "name": f'{r["student__first_name"]} {r["student__last_name"]}'.strip(),
+            }
+        )
+
+    # ـــــــــــ الحصص القادمة (سطر لكل طفل) — values() مع بيانات الطالب ـــــــــــ
+    sessions_qs = (
         ClassSession.objects.filter(
-            group__enrollments__student__in=kids,
+            group__enrollments__student_id__in=kids_ids,
             date__range=(today, next_week),
         )
         .select_related("group", "subject")
-        .order_by("date", "start_time")
-        .distinct()[:50]
+        .annotate(
+            student_id=F("group__enrollments__student_id"),
+            student_first=F("group__enrollments__student__first_name"),
+            student_last=F("group__enrollments__student__last_name"),
+            group_name=F("group__name"),
+            subj_name=Coalesce(F("subject__name"), F("group__subject__name")),
+        )
+        .values(
+            "id",
+            "date",
+            "start_time",
+            "end_time",
+            "is_online",
+            "group_id",
+            "group_name",
+            "subj_name",
+            "student_id",
+            "student_first",
+            "student_last",
+        )
+        .order_by("date", "start_time", "group_name", "student_last")
+        .distinct()
     )
 
-    # واجبات مفتوحة (موعد نهائي بالمستقبل أو بدون موعد نهائي)
+    # ـــــــــــ الواجبات/التسليمات/الفواتير/المدفوعات (زي ما عملنا قبل) ـــــــــــ
     now = timezone.now()
-    open_assignments = (
-        Assignment.objects.filter(group__enrollments__student__in=kids)
-        .filter(Q(due_at__gte=now) | Q(due_at__isnull=True))
+    assignments_qs = (
+        Assignment.objects.filter(group__enrollments__student_id__in=kids_ids)
         .select_related("group", "subject")
         .order_by("-assigned_at")
-        .distinct()[:50]
+        .distinct()
     )
-
-    # أحدث تسليمات الأبناء
-    recent_submissions = (
-        HomeworkSubmission.objects.filter(student__in=kids)
+    submissions_qs = (
+        HomeworkSubmission.objects.filter(student_id__in=kids_ids)
         .select_related("student", "assignment", "assignment__group")
-        .order_by("-submitted_at")[:50]
+        .order_by("-submitted_at")
     )
 
-    # أحدث تقرير لكل طالب
-    last_reports_pairs = []
-    for s in kids:
-        rep = (
-            MonthlyReport.objects.filter(student=s).order_by("-year", "-month").first()
-        )
-        if rep:
-            last_reports_pairs.append((s, rep))
-
-    # فواتير ومدفوعات
-    recent_invoices = (
+    parent_invoices_all = (
         Invoice.objects.filter(parent=parent)
-        .select_related("student", "group")
-        .order_by("-issued_at")[:10]
+        .annotate(
+            paid_sum=Coalesce(
+                Sum("payments__amount_egp"),
+                Value(Decimal("0.00")),
+                output_field=DecimalField(max_digits=10, decimal_places=2),
+            )
+        )
+        .annotate(
+            remaining_amount=ExpressionWrapper(
+                F("amount_egp") - F("paid_sum"),
+                output_field=DecimalField(max_digits=10, decimal_places=2),
+            )
+        )
     )
-    recent_payments = (
+    invoices_qs = parent_invoices_all.select_related("student", "group").order_by(
+        "-issued_at"
+    )
+    payments_qs = (
         Payment.objects.filter(invoice__parent=parent)
         .select_related("invoice", "invoice__student")
-        .order_by("-received_at")[:10]
+        .order_by("-received_at")
     )
 
-    # ملخص فوترة
-    # إجمالي المتبقي على كل الفواتير المفتوحة/المتأخرة (remaining = amount - sum(payments))
-    # بما إن remaining property موجود في الموديل، نجيبها Python-side:
-    parent_invoices_all = Invoice.objects.filter(parent=parent)
-    total_due = sum((inv.remaining for inv in parent_invoices_all), Decimal("0.00"))
+    # ـــــــــــ Pagination ـــــــــــ
+    sessions = paginate(request, sessions_qs, per_page=10, page_param="page_sess")
+    assignments = paginate(request, assignments_qs, per_page=10, page_param="page_assg")
+    submissions = paginate(request, submissions_qs, per_page=10, page_param="page_subs")
+    invoices = paginate(request, invoices_qs, per_page=10, page_param="page_inv")
+    payments = paginate(request, payments_qs, per_page=10, page_param="page_pay")
 
-    total_overdue = sum(
+    # ملخّص فوترة (زي ما كان)
+    total_due = sum(
         (
-            inv.remaining
-            for inv in parent_invoices_all.filter(status=Invoice.Status.OVERDUE)
+            inv["remaining_amount"]
+            for inv in parent_invoices_all.values("remaining_amount")
         ),
         Decimal("0.00"),
     )
-
+    total_overdue = sum(
+        (
+            inv["remaining_amount"]
+            for inv in parent_invoices_all.filter(status=Invoice.Status.OVERDUE).values(
+                "remaining_amount"
+            )
+        ),
+        Decimal("0.00"),
+    )
     month_start = today.replace(day=1)
     month_paid = Payment.objects.filter(
         invoice__parent=parent, received_at__date__gte=month_start
     ).aggregate(s=Sum("amount_egp"))["s"] or Decimal("0.00")
-
     open_count = parent_invoices_all.exclude(status=Invoice.Status.PAID).count()
+    def _d(s: str | None):
+        try:
+            return _date.fromisoformat(s) if s else None
+        except ValueError:
+            return None
 
+# فلترة بالطالب والمدى الزمني من الـ query string
+    sel_student = request.GET.get("st")
+    sel_student = int(sel_student) if (sel_student and sel_student.isdigit()) else None
+    pd_from_d = _d(request.GET.get("att_from"))
+    pd_to_d   = _d(request.GET.get("att_to"))
+
+    # Query أساسي للحضور لكل أولاد وليّ الأمر (مع علاقات جاهزة للعرض)
+    att_q = (
+        Attendance.objects.select_related("student", "session", "session__group")
+        .filter(student_id__in=kids_ids)
+        .filter(attendance_window_q(pd_from_d, pd_to_d))
+    )
+
+    # لو فيه طالب محدد
+    if sel_student:
+        att_q = att_q.filter(student_id=sel_student)
+
+    # نجمع الأرقام لكل طالب (الدالة annotate_attendance_counts عندك)
+    summary_rows = annotate_attendance_counts(att_q)
+
+    # نبني صفوف الملخّص + KPI النسبة الكلية
+    total_present = total_total = 0
+    parent_rows: list[dict] = []
+
+    for r in summary_rows:
+        row_present = (r["present"] or 0) + (r["late"] or 0)   # نحسب المتأخر ضمن الحضور
+        row_total   = r["total"] or 0
+        parent_rows.append({
+            "student_id": r["student_id"],
+            "name": f'{r["student__first_name"]} {r["student__last_name"]}'.strip(),
+            "present": r["present"] or 0,
+            "absent":  r["absent"] or 0,
+            "late":    r["late"] or 0,
+            "excused": r["excused"] or 0,
+            "total":   row_total,
+            "pct_present": pct(row_present, row_total),
+        })
+        total_present += row_present
+        total_total   += row_total
+
+    # الحضور (زي ما عندك) + إضافة عمود الطالب في القالب لاحقاً
+    # ... parent_attendance كما هو عندك ...
+    parent_attendance = {
+        "rows": parent_rows,
+        "kpi_present_pct": pct(total_present, total_total),
+        # حديثة لأغراض الجدول التفصيلي (مع اسم الطالب ظاهر في القالب)
+        "recent": att_q.order_by("-session__date", "-session__start_time")[:20],
+        # لإعادة تعبئة الفورم
+        "sel_student": sel_student,
+        "from": request.GET.get("att_from") or "",
+        "to": request.GET.get("att_to") or "",
+    }
     ctx = {
         "kids": kids,
         "today": today,
         "next_week": next_week,
-        "upcoming_sessions": upcoming_sessions,
-        "open_assignments": open_assignments,
-        "recent_submissions": recent_submissions,
-        "last_reports_pairs": last_reports_pairs,
-        # فوترة
-        "recent_invoices": recent_invoices,
-        "recent_payments": recent_payments,
+        # Page objects
+        "sessions": sessions,
+        "assignments": assignments,
+        "submissions": submissions,
+        "invoices": invoices,
+        "payments": payments,
+        # يساعد القالب يبيّن أبناء كل واجب/مجموعة
+        "group_children_map": group_children_map,
+        # فوترة عامة
         "billing": {
             "total_due": total_due,
             "total_overdue": total_overdue,
             "month_paid": month_paid,
             "open_count": open_count,
         },
+        # الحضور
+        "parent_attendance": parent_attendance,
+        "children": kids,
     }
     return render(request, "core/parent_dashboard.html", ctx)
 
@@ -338,22 +469,23 @@ from django.db.models.functions import TruncDate, TruncMonth
 @teacher_required
 def teacher_dashboard(request):
     tz_today = timezone.localdate()
-    tz_now = timezone.localtime()
+    # tz_now = timezone.localtime()  # مش مستخدم حالياً
 
-    # فلاتر بسيطة من الكويري سترنغ
+    # فلاتر الكويري
     q_group = request.GET.get("group")
     q_subject = request.GET.get("subject")
-    q_status = request.GET.get("status")  # لمهام/تسليمات/فواتير… حسب القسم
+    q_status = request.GET.get("status")
     q_month = int(request.GET.get("month") or tz_today.month)
     q_year = int(request.GET.get("year") or tz_today.year)
 
+    # مجموعات المدرّس
     groups = Group.objects.filter(teacher=request.teacher).select_related(
         "academic_year", "subject"
     )
     if q_group:
         groups = groups.filter(id=q_group)
 
-    # إحصائيات علوية
+    # إحصائيات علوية سريعة
     total_groups = groups.count()
     total_students = Enrollment.objects.filter(group__in=groups, is_active=True).count()
     upcoming_count = ClassSession.objects.filter(
@@ -363,28 +495,109 @@ def teacher_dashboard(request):
         group__in=groups, year=q_year, month=q_month, status__in=["DUE", "OVERDUE"]
     ).count()
 
-    # حصص قادمة (Top 10)
-    sessions = (
+    # ====== قوائم بـ QS قابل للترقيم (pagination) ======
+
+    # حصص قادمة
+    sessions_qs = (
         ClassSession.objects.filter(group__in=groups, date__gte=tz_today)
         .select_related("group", "subject")
-        .order_by("date", "start_time")[:10]
+        .defer("notes", "meeting_link")
+        .order_by("date", "start_time")
     )
+    sessions_page = paginate(request, sessions_qs, per_page=10, page_param="page_sess")
 
-    # واجبات حديثة (آخر 10)
-    assignments = (
+    # واجبات
+    assignments_qs = (
         Assignment.objects.filter(group__in=groups)
         .select_related("group", "subject")
-        .order_by("-assigned_at")[:10]
+        .defer("description")
+        .order_by("-assigned_at")
+    )
+    assignments_page = paginate(
+        request, assignments_qs, per_page=10, page_param="page_assg"
     )
 
-    # تسليمات تحتاج تصحيح (آخر 10)
-    subs = (
+    # تسليمات
+    subs_qs = (
         HomeworkSubmission.objects.filter(assignment__group__in=groups)
         .select_related("student", "assignment__group", "assignment__subject")
-        .order_by("-submitted_at")[:10]
+        .defer("answer_text", "feedback", "file")
+        .order_by("-submitted_at")
     )
+    # (اختياري) لو عايز فلترة بالحالة q_status على التسليمات:
+    if q_status in {"SUBMITTED", "LATE", "GRADED"}:
+        subs_qs = subs_qs.filter(status=q_status)
+    subs_page = paginate(request, subs_qs, per_page=10, page_param="page_subs")
 
-    # مجموعاتك مع أعداد سريعة
+    # فواتير الشهر
+    invoices_qs = (
+    Invoice.objects.filter(group__in=groups, year=q_year, month=q_month)
+    .select_related("student", "group")
+    .annotate(
+        paid_sum=Coalesce(
+            Sum("payments__amount_egp"),
+            Value(Decimal("0.00")),
+            output_field=DecimalField(max_digits=10, decimal_places=2),
+        )
+    )
+    .annotate(
+        remaining_amount=ExpressionWrapper(
+            F("amount_egp") - F("paid_sum"),
+            output_field=DecimalField(max_digits=10, decimal_places=2),
+        )
+    )
+    .order_by("-status", "student__last_name")
+)
+
+# لو الشهر/السنة المحددين فاضيين: قفز لآخر شهر فيه بيانات
+    latest_inv = (
+        Invoice.objects.filter(group__in=groups)
+        .order_by("-year", "-month", "-issued_at")
+        .first()
+    )
+    if latest_inv and not invoices_qs.exists():
+        q_year, q_month = latest_inv.year, latest_inv.month
+        invoices_qs = (
+            Invoice.objects.filter(group__in=groups, year=q_year, month=q_month)
+            .select_related("student", "group")
+            .annotate(
+                paid_sum=Coalesce(
+                    Sum("payments__amount_egp"),
+                    Value(Decimal("0.00")),
+                    output_field=DecimalField(max_digits=10, decimal_places=2),
+                )
+            )
+            .annotate(
+                remaining_amount=ExpressionWrapper(
+                    F("amount_egp") - F("paid_sum"),
+                    output_field=DecimalField(max_digits=10, decimal_places=2),
+                )
+            )
+            .order_by("-status", "student__last_name")
+        )
+
+    invoices_page = paginate(request, invoices_qs, per_page=10, page_param="page_inv")
+
+
+
+    # الموارد (فلترة قبل paginate)
+    resources_qs = (
+        Resource.objects.filter(Q(group__in=groups) | Q(session__group__in=groups))
+        .select_related(
+            "group", "session__group", "subject", "session", "session__subject"
+        )
+        .order_by("-created_at")
+        .distinct()
+    )
+    if q_subject:
+        resources_qs = resources_qs.filter(
+            Q(subject_id=q_subject)
+            | Q(session__subject_id=q_subject)
+            | Q(session__group__subject_id=q_subject)
+        )
+    resources_page = paginate(request, resources_qs, per_page=10, page_param="page_res")
+
+    # عدّادات سريعة لكل مجموعة
     group_ids = list(groups.values_list("id", flat=True))
     enroll_counts = dict(
         Enrollment.objects.filter(group_id__in=group_ids, is_active=True)
@@ -399,36 +612,66 @@ def teacher_dashboard(request):
         .values_list("group_id", "c")
     )
 
-    # فواتير الشهر (مختصر)
-    invoices = (
-        Invoice.objects.filter(group__in=groups, year=q_year, month=q_month)
-        .select_related("student", "group")
-        .order_by("-status", "student__last_name")[:10]
-    )
-
-    # المواد لفلترة/عرض
+    # المواد
     subjects = Subject.objects.filter(is_active=True).order_by("name")
-    resources = (
-        Resource.objects.filter(Q(group__in=groups) | Q(session__group__in=groups))
-        .select_related("group", "subject", "session", "session__group")
-        .order_by("-created_at")[:15]
-    )
 
-    # (اختياري) لو عاوز فلترة بالـ subject من تبويب الموارد:
-    if q_subject:
-        resources = resources.filter(
-            Q(subject_id=q_subject)
-            | Q(session__subject_id=q_subject)
-            | Q(session__group__subject_id=q_subject)
+    # ====== ملخّص حضور المدرّس ======
+    att_group_id = request.GET.get("att_group")
+    att_from = request.GET.get("att_from")
+    att_to = request.GET.get("att_to")
+
+    def _parse_date(s):
+        if not s:
+            return None
+        try:
+            return timezone.datetime.fromisoformat(s).date()
+        except ValueError:
+            return None
+
+    att_from_d = _parse_date(att_from)
+    att_to_d = _parse_date(att_to)
+
+    teacher_groups = Group.objects.filter(teacher=request.teacher)
+    att_q = (
+        Attendance.objects.select_related("student", "session", "session__group")
+        .filter(session__group__in=teacher_groups)
+        .filter(attendance_window_q(att_from_d, att_to_d))
+    )
+    if att_group_id:
+        att_q = att_q.filter(session__group_id=att_group_id)
+
+    att_rows = annotate_attendance_counts(att_q)
+
+    att_list = []
+    tot_present = tot_total = 0
+    for r in att_rows:
+        row_present = (r["present"] or 0) + (r["late"] or 0)
+        row_total = r["total"] or 0
+        att_list.append(
+            {
+                "student_id": r["student_id"],
+                "name": f'{r["student__first_name"]} {r["student__last_name"]}'.strip(),
+                "present": r["present"] or 0,
+                "absent": r["absent"] or 0,
+                "late": r["late"] or 0,
+                "excused": r["excused"] or 0,
+                "total": row_total,
+                "pct_present": pct(row_present, row_total),
+            }
         )
+        tot_present += row_present
+        tot_total += row_total
+
+    attendance_teacher_summary = {
+        "rows": att_list,
+        "kpi_present_pct": pct(tot_present, tot_total),
+        "kpi_total_records": tot_total,
+    }
+
     ctx = dict(
         groups=groups,
         enroll_counts=enroll_counts,
         sess_counts=sess_counts,
-        sessions=sessions,
-        assignments=assignments,
-        subs=subs,
-        invoices=invoices,
         subjects=subjects,
         q_group=q_group,
         q_subject=q_subject,
@@ -439,7 +682,17 @@ def teacher_dashboard(request):
         total_students=total_students,
         upcoming_count=upcoming_count,
         due_invoices=due_invoices,
-        resources=resources,  # ← مهم
+        # صفحات مرقّمة
+        sessions=sessions_page,
+        assignments=assignments_page,
+        subs=subs_page,
+        invoices=invoices_page,
+        resources=resources_page,
+        # حضور
+        attendance_teacher_summary=attendance_teacher_summary,
+        att_group_id=att_group_id,
+        att_from=att_from or "",
+        att_to=att_to or "",
     )
     return render(request, "core/teacher_dashboard.html", ctx)
 
@@ -967,13 +1220,17 @@ def _render_pdf(html_str):
     return pdf_io.getvalue()
 
 
-@parent_required
+@teacher_required  # أو استخدم ديكور يمرر لو Teacher أو Parent
 def invoice_pdf(request, invoice_id: int):
-    inv = get_object_or_404(
-        Invoice.objects.select_related("student", "group"),
-        id=invoice_id,
-        parent=request.parent,
-    )
+    qs = Invoice.objects.select_related("student", "group", "parent")
+
+    if hasattr(request, "parent") and request.parent:
+        inv = get_object_or_404(qs, id=invoice_id, parent=request.parent)
+    elif hasattr(request, "teacher") and request.teacher:
+        inv = get_object_or_404(qs, id=invoice_id, group__teacher=request.teacher)
+    else:
+        return HttpResponseForbidden("غير مسموح")
+
     html = render(
         request,
         "core/invoice_pdf.html",
@@ -983,10 +1240,12 @@ def invoice_pdf(request, invoice_id: int):
             "SITE_URL": getattr(settings, "SITE_URL", ""),
         },
     ).content.decode("utf-8")
+
     pdf_bytes = _render_pdf(html)
     resp = HttpResponse(pdf_bytes, content_type="application/pdf")
-    filename = f"invoice_{inv.student.id}_{inv.year}_{inv.month}.pdf"
-    resp["Content-Disposition"] = f'attachment; filename="{filename}"'
+    resp["Content-Disposition"] = (
+        f'attachment; filename="invoice_{inv.student.id}_{inv.year}_{inv.month}.pdf"'
+    )
     return resp
 
 
@@ -1405,7 +1664,7 @@ def session_qr_screen(request, session_id: int):
         or not s.qr_token_expires_at
         or timezone.now() >= s.qr_token_expires_at
     ):
-        s.refresh_qr_token(ttl_seconds=60)
+        s.refresh_qr_token(ttl_seconds=600)
 
     scan_url = _build_scan_url(request, s)
     qr_data_url = _make_qr_data_url(scan_url)  # ممكن ترجع None
@@ -1545,58 +1804,107 @@ def student_dashboard(request):
         )
     )
 
-    # واجبات مفتوحة (أحدث 50)
-    open_assignments = (
+    # ====== QuerySets من غير تقطيع علشان pagination ======
+    assignments_qs = (
         Assignment.objects.filter(group_id__in=group_ids)
         .select_related("group", "subject", "group__subject")
-        .order_by("-assigned_at")[:50]
+        .order_by("-assigned_at")
     )
 
-    # آخر تسليم لكل واجب
-    subs = {
-        sub.assignment_id: sub
-        for sub in HomeworkSubmission.objects.filter(
-            student=s, assignment_id__in=[a.id for a in open_assignments]
-        )
-    }
-
-    # حصص الأسبوع القادم
     today = timezone.localdate()
     next_week = today + timezone.timedelta(days=7)
-    upcoming_sessions = (
+    sessions_qs = (
         ClassSession.objects.filter(
             group_id__in=group_ids, date__range=(today, next_week)
         )
         .select_related("group", "subject", "group__subject")
-        .order_by("date", "start_time")[:30]
+        .order_by("date", "start_time")
     )
 
-    # تسليمات أخيرة
-    recent_submissions = (
+    submissions_qs = (
         HomeworkSubmission.objects.filter(student=s)
         .select_related("assignment", "assignment__group")
-        .order_by("-submitted_at")[:50]
+        .order_by("-submitted_at")
     )
 
-    # موارد حديثة + تفاصيل
-    recent_resources = (
+    resources_qs = (
         Resource.objects.filter(
             Q(group_id__in=group_ids) | Q(session__group_id__in=group_ids)
         )
         .select_related("group", "session", "session__group", "subject")
-        .order_by("-created_at")[:30]
+        .order_by("-created_at")
     )
+
+    # ====== Pagination ======
+    assignments = paginate(request, assignments_qs, per_page=10, page_param="page_assg")
+    sessions = paginate(request, sessions_qs, per_page=10, page_param="page_sched")
+    submissions = paginate(request, submissions_qs, per_page=10, page_param="page_subs")
+    resources = paginate(request, resources_qs, per_page=10, page_param="page_res")
+
+    # آخر تسليم لكل واجب "في الصفحة الحالية" بس (أوفر وأسرع)
+    current_assignment_ids = [a.id for a in assignments]
+    subs_map = {
+        sub.assignment_id: sub
+        for sub in HomeworkSubmission.objects.filter(
+            student=s, assignment_id__in=current_assignment_ids
+        ).select_related("assignment")
+    }
+
+    # ====== الحضور (فلترة + ملخص) ======
+    sd_from = request.GET.get("att_from")
+    sd_to = request.GET.get("att_to")
+    try:
+        sd_from_d = timezone.datetime.fromisoformat(sd_from).date() if sd_from else None
+    except ValueError:
+        sd_from_d = None
+    try:
+        sd_to_d = timezone.datetime.fromisoformat(sd_to).date() if sd_to else None
+    except ValueError:
+        sd_to_d = None
+
+    self_att_q = (
+        Attendance.objects.select_related("session", "session__group")
+        .filter(student=s)
+        .filter(attendance_window_q(sd_from_d, sd_to_d))
+    )
+
+    summary = annotate_attendance_counts(self_att_q)
+    stats = {
+        "present": 0,
+        "absent": 0,
+        "late": 0,
+        "excused": 0,
+        "total": 0,
+        "pct_present": 0,
+    }
+    if summary:
+        r = list(summary)[0]
+        stats["present"] = r["present"] or 0
+        stats["absent"] = r["absent"] or 0
+        stats["late"] = r["late"] or 0
+        stats["excused"] = r["excused"] or 0
+        stats["total"] = r["total"] or 0
+        stats["pct_present"] = pct(stats["present"] + stats["late"], stats["total"])
+
+    student_attendance = {
+        "stats": stats,
+        "recent": self_att_q.order_by("-session__date", "-session__start_time")[:20],
+        "from": sd_from or "",
+        "to": sd_to or "",
+    }
 
     ctx = {
         "student": s,
-        "open_assignments": open_assignments,
-        "subs_map": subs,
-        "upcoming_sessions": upcoming_sessions,
-        "recent_submissions": recent_submissions,
-        "recent_resources": recent_resources,
+        # Page objects (زي ما القالب متوقع)
+        "assignments": assignments,
+        "sessions": sessions,
+        "submissions": submissions,
+        "resources": resources,
+        "subs_map": subs_map,
         "today": today,
         "next_week": next_week,
-        "now_ts": int(timezone.now().timestamp()),  # ← مهم للتمپليت
+        "now_ts": int(timezone.now().timestamp()),
+        "student_attendance": student_attendance,
     }
     return render(request, "core/student_dashboard.html", ctx)
 
@@ -1769,7 +2077,7 @@ def download_submission(request, submission_id: int):
 
 @login_required
 def group_create(request):
-    # يختار المدرس فقط
+    # يُسمح للمدرّس فقط
     try:
         tp = request.user.teacherprofile
     except TeacherProfile.DoesNotExist:
@@ -1779,15 +2087,23 @@ def group_create(request):
     if request.method == "POST":
         form = GroupForm(request.POST)
         if form.is_valid():
-            g = form.save(commit=False)
-            g.teacher = tp
-            g.save()
-            messages.success(request, "تم إنشاء المجموعة.")
-            return redirect("core:teacher_groups")
+            # تحقّق صارم: لابد من مادة
+            subject = form.cleaned_data.get("subject")
+            if not subject:
+                form.add_error("subject", "لا يمكن إنشاء مجموعة بدون مادة.")
+            else:
+                g = form.save(commit=False)
+                g.teacher = tp
+                g.save()
+                messages.success(request, "تم إنشاء المجموعة.")
+                return redirect("core:teacher_groups")
     else:
         form = GroupForm()
+
     return render(
-        request, "core/group_form.html", {"form": form, "title": "إنشاء مجموعة"}
+        request,
+        "core/group_form.html",
+        {"form": form, "title": "إنشاء مجموعة"},
     )
 
 
@@ -1820,7 +2136,7 @@ def group_students_manage(request, group_id):
     bulk_form = BulkStudentsForm(request.POST or None)
     add_form = AddExistingStudentsForm(request.POST or None)
 
-    # إزالة طالب
+    # إزالة طالب من المجموعة
     if (
         request.method == "POST"
         and request.POST.get("action") == "remove"
@@ -1831,7 +2147,7 @@ def group_students_manage(request, group_id):
         messages.success(request, "تم إزالة الطالب من المجموعة.")
         return redirect("core:group_students_manage", group_id=g.id)
 
-    # إضافة IDs موجودة
+    # إضافة IDs موجودة (بالنص)
     if request.method == "POST" and request.POST.get("action") == "add_existing":
         if add_form.is_valid():
             raw = add_form.cleaned_data.get("student_ids") or ""
@@ -1849,7 +2165,7 @@ def group_students_manage(request, group_id):
             messages.success(request, f"تمت إضافة {added} طالب/طلاب موجودين.")
             return redirect("core:group_students_manage", group_id=g.id)
 
-    # إضافة Bulk نصية
+    # إنشاء طلاب Bulk ثم إضافتهم
     if request.method == "POST" and request.POST.get("action") == "bulk_create":
         if bulk_form.is_valid():
             lines = bulk_form.cleaned_data.get("lines") or ""
@@ -1858,17 +2174,13 @@ def group_students_manage(request, group_id):
                 line = line.strip()
                 if not line:
                     continue
-                # parse: name[, phone][, email]
                 parts = [p.strip() for p in line.split(",")]
                 name = parts[0]
                 phone = parts[1] if len(parts) > 1 else ""
                 email = parts[2] if len(parts) > 2 else ""
-
-                # حاول نفصل الاسم لأول وآخر (ببساطة)
                 name_parts = name.split()
                 first = name_parts[0]
                 last = " ".join(name_parts[1:]) if len(name_parts) > 1 else ""
-
                 st = Student.objects.create(
                     first_name=first, last_name=last, phone=phone, email=email
                 )
@@ -1877,12 +2189,63 @@ def group_students_manage(request, group_id):
             messages.success(request, f"تم إنشاء/إضافة {added} طالب/طلاب.")
             return redirect("core:group_students_manage", group_id=g.id)
 
-    # قائمة الأعضاء الحاليين
+    # إضافة طلاب مختارين من اللستة (checkboxes)
+    if request.method == "POST" and request.POST.get("action") == "add_picked":
+        picked_ids = request.POST.getlist("pick")
+        if not picked_ids:
+            messages.warning(request, "لم يتم اختيار أي طلاب.")
+        else:
+            qs = Student.objects.filter(id__in=picked_ids)
+            added = 0
+            for st in qs:
+                _, created = Enrollment.objects.get_or_create(
+                    student=st, group=g, defaults={"is_active": True}
+                )
+                if created:
+                    added += 1
+            messages.success(request, f"تمت إضافة {added} طالب/طلاب للمجموعة.")
+        return redirect("core:group_students_manage", group_id=g.id)
+
+    # أعضاء المجموعة الحاليون
     members = (
         Enrollment.objects.select_related("student")
         .filter(group=g)
         .order_by("student__first_name", "student__last_name")
     )
+
+    # ===== قائمة "الطلاب المتاحين" مع فلاتر =====
+    q = (request.GET.get("q") or "").strip()
+    only_free = request.GET.get("only_free") == "1"
+
+    # IDs الطلاب الموجودين بالفعل بالمجموعة
+    enrolled_ids = list(
+        Enrollment.objects.filter(group=g).values_list("student_id", flat=True)
+    )
+
+    # قاعدة: أي طالب ليس ضمن هذه المجموعة
+    available_qs = Student.objects.exclude(id__in=enrolled_ids)
+
+    # فلتر بحث (اسم/تليفون/إيميل)
+    if q:
+        available_qs = available_qs.filter(
+            Q(first_name__icontains=q)
+            | Q(last_name__icontains=q)
+            | Q(phone__icontains=q)
+            | Q(email__icontains=q)
+        )
+
+    # خيار: عرض الطلاب غير المنتسبين لأي مجموعة نشِطة
+    if only_free:
+        active_anywhere = Enrollment.objects.filter(
+            student_id=OuterRef("pk"),
+            is_active=True,
+        )
+        available_qs = available_qs.annotate(has_active=Exists(active_anywhere)).filter(
+            has_active=False
+        )
+
+    # ترتيب بسيط وحد أقصى للعرض
+    available_qs = available_qs.order_by("first_name", "last_name")[:200]
 
     return render(
         request,
@@ -1892,6 +2255,10 @@ def group_students_manage(request, group_id):
             "members": members,
             "bulk_form": bulk_form,
             "add_form": add_form,
+            # للبلوك الجديد:
+            "available_students": available_qs,
+            "q": q,
+            "only_free": "1" if only_free else "0",
         },
     )
 
@@ -2028,7 +2395,11 @@ def invoice_create(request):
             )
 
         messages.success(request, "تم إنشاء الفاتورة بنجاح.")
-        return redirect(reverse("core:dashboard") + "#tab-billing")
+        url = (
+            f"{reverse('core:dashboard')}"
+            f"?year={inv.year}&month={inv.month}&group={inv.group_id}#tab-billing"
+        )
+        return redirect(url)
 
     return render(request, "core/invoice_form.html", {"form": form, "mode": "create"})
 
@@ -2101,16 +2472,31 @@ def invoice_bulk_create(request):
 @teacher_required
 @require_http_methods(["GET", "POST"])
 def payment_create(request, pk):
-    inv = get_object_or_404(_invoice_qs_for_teacher(request.teacher), pk=pk)
-    form = PaymentForm(request.POST or None)
-    if request.method == "POST" and form.is_valid():
-        pay = form.save(commit=False)
-        pay.invoice = inv
-        pay.save()
-        inv.refresh_status(commit=True)
-        messages.success(request, "تم تسجيل السداد وتحديث حالة الفاتورة.")
-        return redirect(reverse("core:dashboard") + "#tab-billing")
-    return render(request, "core/payment_form.html", {"form": form, "invoice": inv})
+    inv = get_object_or_404(
+        Invoice.objects.select_related("student", "group"),
+        pk=pk,
+        group__teacher=request.teacher,
+    )
+
+    # قفل السداد لو مدفوعة/لا يوجد متبقي
+    inv.refresh_status(commit=True)  # يحدّث الحالة بناءً على remaining
+    if inv.remaining <= 0 or inv.status == Invoice.Status.PAID:
+        messages.info(request, "الفاتورة مدفوعة بالكامل، لا يمكن إضافة سداد جديد.")
+        return redirect("core:dashboard")
+
+    if request.method == "POST":
+        form = PaymentForm(request.POST)
+        if form.is_valid():
+            pay = form.save(commit=False)
+            pay.invoice = inv
+            pay.save()
+            inv.refresh_status(commit=True)
+            messages.success(request, "تم تسجيل السداد وتحديث حالة الفاتورة.")
+            return redirect("core:dashboard")
+    else:
+        form = PaymentForm()
+
+    return render(request, "core/payment_create.html", {"invoice": inv, "form": form})
 
 
 @teacher_required
@@ -2127,3 +2513,25 @@ def api_group_students(request, group_id: int):
     )
     data = [{"id": s.id, "name": f"{s.first_name} {s.last_name}"} for s in qs]
     return JsonResponse({"results": data})
+
+
+@teacher_required
+@require_POST
+def dashboard_reminders_window(request):
+    window = int(request.POST.get("window") or 120)
+    teacher_id = request.teacher.id
+
+    def _enqueue():
+        send_session_reminders_window_task.delay(window, teacher_id)
+
+    try:
+        transaction.on_commit(_enqueue)
+        messages.success(request, f"تم جدولة تذكيرات لأقرب {window} دقيقة.")
+    except OperationalError:
+        # بروكر مش شغال → نفّذ فورًا (Inline)
+        sent = _send_window_logic(window_minutes=window, teacher_id=teacher_id)
+        messages.warning(
+            request,
+            f"البروكر غير متاح؛ تم التنفيذ فورًا داخل السيرفر. تذكيرات مُرسلة: {sent}.",
+        )
+    return redirect(reverse("core:dashboard"))

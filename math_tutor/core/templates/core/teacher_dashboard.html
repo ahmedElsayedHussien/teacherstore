@@ -1,6 +1,8 @@
 {% extends "base.html" %}
+{% load querystring %}
 {% load misc %}
 {% block content %}
+
 <!doctype html>
 <html lang="ar" dir="rtl">
 <head>
@@ -41,9 +43,9 @@
         <a class="btn btn-outline-secondary btn-sm" href="{% url 'core:teacher_groups' %}">
           <i class="bi bi-people"></i> مجموعاتي
         </a>
-        <a class="btn btn-outline-secondary btn-sm" href="{% url 'core:parent_invoices' %}">
+        {% comment %} <a class="btn btn-outline-secondary btn-sm" href="{% url 'core:parent_invoices' %}">
           <i class="bi bi-receipt"></i> فواتير أولياء الأمور
-        </a>
+        </a> {% endcomment %}
         <form method="post" action="{% url 'core:dashboard_generate_next_week' %}" class="d-inline">
   {% csrf_token %}
   <button class="btn btn-sm btn-outline-primary"
@@ -54,14 +56,16 @@
         <a class="btn btn-primary btn-sm" href="{% url 'core:dashboard' %}">
           <i class="bi bi-arrow-repeat"></i> تحديث
         </a>
+        <form method="post" action="{% url 'core:dashboard_reminders_window' %}" class="d-inline">
+  {% csrf_token %}
+  <input type="hidden" name="window" value="120">
+  <button class="btn btn-sm btn-outline-warning" onclick="return confirm('تشغيل تذكيرات لأقرب ساعتين؟')">
+    <i class="bi bi-bell"></i> تذكيرات (نافذة 120د)
+  </button>
+</form>
       </div>
     </div>
   </div>
-<form method="post" action="{% url 'core:logout' %}" class="d-inline">
-  {% csrf_token %}
-  <button type="submit" class="btn btn-outline-secondary btn-sm">تسجيل الخروج</button>
-</form>
-<a class="btn btn-outline-secondary btn-sm" href="{% url 'core:account_profile' %}">الملف الشخصي</a>
 
   <!-- KPIs -->
   <div class="row g-3 mb-4">
@@ -99,6 +103,10 @@
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-submissions" type="button">التسليمات</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-billing" type="button">الفوترة</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-resources" type="button">الموارد</button></li>
+    <li class="nav-item">
+  <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-attendance" type="button">الحضور</button>
+</li>
+
   </ul>
 
   <div class="tab-content">
@@ -166,7 +174,7 @@
           <table class="table table-sm">
             <thead><tr><th>التاريخ</th><th>الوقت</th><th>المجموعة</th><th>المادة</th><th>النمط</th><th class="text-end">أكشن</th></tr></thead>
             <tbody>
-              {% for s in sessions %}
+              {% for s in sessions%}
               <tr>
                 <td>{{ s.date }}</td>
                 <td>{{ s.start_time }}–{{ s.end_time }}</td>
@@ -185,6 +193,7 @@
               {% endfor %}
             </tbody>
           </table>
+          {% include "partials/pagination.html" with page_obj=sessions page_param="page_sess" %}
         </div>
         {% else %}
           <div class="empty"><i class="bi bi-calendar-x fs-3 d-block mb-2"></i> لا توجد حصص قريبة.</div>
@@ -223,6 +232,8 @@
               {% endfor %}
             </tbody>
           </table>
+          {% include "partials/pagination.html" with page_obj=assignments page_param="page_assg" %}
+
         </div>
         {% else %}
           <div class="empty"><i class="bi bi-card-checklist fs-3 d-block mb-2"></i> لا واجبات.</div>
@@ -266,6 +277,8 @@
               {% endfor %}
             </tbody>
           </table>
+          {% include "partials/pagination.html" with page_obj=subs page_param="page_subs" %}
+
         </div>
         {% else %}
           <div class="empty"><i class="bi bi-inbox fs-3 d-block mb-2"></i> لا تسليمات حتى الآن.</div>
@@ -290,22 +303,41 @@
           <table class="table table-sm">
             <thead><tr><th>الطالب</th><th>المجموعة</th><th>المبلغ</th><th>الحالة</th><th class="text-end">PDF</th></tr></thead>
             <tbody>
-              {% for inv in invoices %}
-              <tr>
-                <td>{{ inv.student.first_name }} {{ inv.student.last_name }}</td>
-                <td>{% if inv.group %}{{ inv.group.name }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
-                <td class="fw-semibold">{{ inv.amount_egp }}</td>
-                <td>
-                  {% if inv.status == 'PAID' %}<span class="badge bg-success"><i class="bi bi-check2-circle"></i> مدفوع</span>
-                  {% elif inv.status == 'OVERDUE' %}<span class="badge bg-danger"><i class="bi bi-exclamation-octagon"></i> متأخر</span>
-                  {% elif inv.status == 'CANCELED' %}<span class="badge bg-secondary"><i class="bi bi-x-circle"></i> ملغاة</span>
-                  {% else %}<span class="badge bg-warning text-dark"><i class="bi bi-hourglass-split"></i> مستحق</span>{% endif %}
-                </td>
-                <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="{% url 'core:invoice_pdf' inv.id %}"><i class="bi bi-filetype-pdf"></i> تحميل</a></td>
-              </tr>
-              {% endfor %}
+              {% for invoice in invoices %}
+  <tr>
+    <td>{{ invoice.student.first_name }} {{ invoice.student.last_name }}</td>
+    <td>{% if invoice.group %}{{ invoice.group.name }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+    <td class="fw-semibold">{{ invoice.amount_egp }}</td>
+    <td>
+      {% if invoice.status == 'PAID' %}<span class="badge bg-success">مدفوع</span>
+      {% elif invoice.status == 'OVERDUE' %}<span class="badge bg-danger">متأخر</span>
+      {% elif invoice.status == 'CANCELED' %}<span class="badge bg-secondary">ملغاة</span>
+      {% else %}<span class="badge bg-warning text-dark">مستحق</span>{% endif %}
+    </td>
+    <td class="text-end">
+      {# PDF (آمن) #}
+      {% url 'core:invoice_pdf' invoice.pk as pdf_url %}
+      {% if pdf_url %}
+        <a class="btn btn-sm btn-outline-primary" href="{{ pdf_url }}"><i class="bi bi-filetype-pdf"></i> تحميل</a>
+      {% else %}
+        <span class="text-muted">—</span>
+      {% endif %}
+
+      {# سداد (آمن) #}
+      {% url 'core:payment_create' invoice.pk as pay_url %}
+      {% if pay_url %}
+        <a class="btn btn-sm btn-outline-success" href="{{ pay_url }}">سداد</a>
+      {% endif %}
+    </td>
+  </tr>
+{% empty %}
+  <tr><td colspan="5" class="text-center text-muted">لا فواتير للمدى المُحدد.</td></tr>
+{% endfor %}
+
             </tbody>
           </table>
+          {% include "partials/pagination.html" with page_obj=invoices page_param="page_inv" %}
+
         </div>
         {% else %}
           <div class="empty"><i class="bi bi-receipt fs-3 d-block mb-2"></i> لا فواتير للمدى المُحدد.</div>
@@ -349,29 +381,107 @@
       <i class="bi bi-trash"></i> حذف
     </button>
   </form>
-</td><td class="text-end">
-  <a class="btn btn-sm btn-outline-success" href="{% url 'core:payment_create' inv.id %}">
-    تسجيل سداد
-  </a>
-  <a class="btn btn-sm btn-outline-secondary" href="{% url 'core:invoice_update' inv.id %}">
-    تعديل
-  </a>
-  <form method="post" action="{% url 'core:invoice_delete' inv.id %}" class="d-inline"
-        onsubmit="return confirm('حذف الفاتورة؟ لا يمكن التراجع.')">
-    {% csrf_token %}
-    <button class="btn btn-sm btn-outline-danger">حذف</button>
-  </form>
 </td>
+<td class="text-end">
+  {# زر PDF #}
+  {% url 'core:invoice_pdf' invoice.pk as pdf_url %}
+  {% if pdf_url %}
+    <a class="btn btn-sm btn-outline-primary" href="{{ pdf_url }}">
+      <i class="bi bi-filetype-pdf"></i> تحميل
+    </a>
+  {% endif %}
+
+  {# زر السداد: يتعطل لو Paid أو المتبقي صفر #}
+  {% if invoice.status == 'PAID' or invoice.remaining|add:0 <= 0 %}
+    <a class="btn btn-sm btn-outline-success disabled"
+       aria-disabled="true" tabindex="-1"
+       title="مدفوعة بالكامل">
+      سداد
+    </a>
+  {% else %}
+    {% url 'core:payment_create' invoice.pk as pay_url %}
+    {% if pay_url %}
+      <a class="btn btn-sm btn-outline-success" href="{{ pay_url }}">سداد</a>
+    {% endif %}
+  {% endif %}
+</td>
+
               </tr>
             {% endfor %}
             </tbody>
           </table>
+          {% include "partials/pagination.html" with page_obj=resources page_param="page_res" %}
+
         </div>
         {% else %}
           <div class="empty"><i class="bi bi-folder2-open fs-3 d-block mb-2"></i> لا موارد حتى الآن.</div>
         {% endif %}
       </div>
     </div>
+    <div class="tab-pane fade" id="tab-attendance">
+  <div class="card p-3">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <div class="h6 m-0">حضور الطلاب</div>
+      <form class="d-flex gap-2" method="get">
+        <select name="att_group" class="form-select form-select-sm" style="width:auto">
+          <option value="">كل المجموعات</option>
+          {% for g in groups %}
+            <option value="{{ g.id }}" {% if att_group_id == g.id|stringformat:"s" %}selected{% endif %}>{{ g.name }}</option>
+          {% endfor %}
+        </select>
+        <input type="date" class="form-control form-control-sm" name="att_from" value="{{ att_from }}" style="width:160px">
+        <input type="date" class="form-control form-control-sm" name="att_to" value="{{ att_to }}" style="width:160px">
+        <button class="btn btn-sm btn-outline-secondary">تصفية</button>
+      </form>
+    </div>
+
+    <div class="row g-3 mb-2">
+      <div class="col-6 col-lg-3">
+        <div class="kpi d-flex align-items-center gap-3">
+          <i class="bi bi-people fs-3"></i>
+          <div>
+            <div class="lbl">إجمالي السجلات</div>
+            <div class="num">{{ attendance_teacher_summary.kpi_total_records }}</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-6 col-lg-3">
+        <div class="kpi d-flex align-items-center gap-3">
+          <i class="bi bi-clipboard-check fs-3"></i>
+          <div>
+            <div class="lbl">نسبة الحضور</div>
+            <div class="num">{{ attendance_teacher_summary.kpi_present_pct }}%</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead>
+          <tr><th>الطالب</th><th class="text-center">حاضر</th><th class="text-center">غائب</th><th class="text-center">متأخر</th><th class="text-center">معذور</th><th class="text-center">المجموع</th><th class="text-end">% حضور</th></tr>
+        </thead>
+        <tbody>
+          {% for r in attendance_teacher_summary.rows %}
+          <tr>
+            <td class="fw-semibold">{{ r.name }}</td>
+            <td class="text-center">{{ r.present }}</td>
+            <td class="text-center">{{ r.absent }}</td>
+            <td class="text-center">{{ r.late }}</td>
+            <td class="text-center">{{ r.excused }}</td>
+            <td class="text-center">{{ r.total }}</td>
+            <td class="text-end">{{ r.pct_present }}%</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="7" class="text-center text-muted">لا سجلات ضمن المدى.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+  </div>
+</div>
+
 
   </div>
 

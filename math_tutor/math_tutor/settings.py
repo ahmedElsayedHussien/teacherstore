@@ -147,6 +147,7 @@ CELERY_BEAT_SCHEDULE = {
     "session-reminders-every-5m": {
         "task": "core.tasks.send_session_reminders_window",
         "schedule": 300.0,  # كل 5 دقايق
+        "args":(120,)
     },
     "invoice-daily-reminder": {
         "task": "core.tasks.remind_overdue_invoices",
@@ -157,3 +158,6 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": crontab(minute="*/30"),
     },
 }
+# تشغيل المهام فورًا داخل نفس بروسيس Django (بدون ووركر)
+CELERY_TASK_ALWAYS_EAGER = True
+CELERY_TASK_EAGER_PROPAGATES = True

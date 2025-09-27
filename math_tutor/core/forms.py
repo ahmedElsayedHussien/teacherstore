@@ -117,6 +117,10 @@ class GroupForm(forms.ModelForm):
             "note": forms.Textarea(attrs={"rows": 3}),
         }
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["subject"].required = True
+
 
 class BulkStudentsForm(forms.Form):
     """
